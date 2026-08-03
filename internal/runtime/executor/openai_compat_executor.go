@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -192,7 +193,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		b, _ := io.ReadAll(httpResp.Body)
 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = openAICompatStatusError(httpResp, b)
 		return resp, err
 	}
 	body, err := io.ReadAll(httpResp.Body)
@@ -290,7 +291,7 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
-		err = statusErr{code: httpResp.StatusCode, msg: string(body)}
+		err = openAICompatStatusError(httpResp, body)
 		return resp, err
 	}
 
@@ -400,7 +401,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		if errClose := httpResp.Body.Close(); errClose != nil {
 			log.Errorf("openai compat executor: close response body error: %v", errClose)
 		}
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = openAICompatStatusError(httpResp, b)
 		return nil, err
 	}
 	out := make(chan cliproxyexecutor.StreamChunk)
@@ -569,7 +570,7 @@ func (e *OpenAICompatExecutor) executeImagesStream(ctx context.Context, auth *cl
 		}
 		helps.AppendAPIResponseChunk(ctx, e.cfg, body)
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
-		return nil, statusErr{code: httpResp.StatusCode, msg: string(body)}
+		return nil, openAICompatStatusError(httpResp, body)
 	}
 
 	out := make(chan cliproxyexecutor.StreamChunk)
@@ -868,6 +869,116 @@ func (e *OpenAICompatExecutor) overrideModel(payload []byte, model string) []byt
 		return payload
 	}
 	return helps.SetStringIfDifferent(payload, "model", model)
+}
+
+var openAICompatRetryDurationPattern = regexp.MustCompile(`(?i)([0-9]+)\s*(ms|s|m|h|d)`)
+
+func openAICompatStatusError(response *http.Response, body []byte) statusErr {
+	status := 0
+	var headers http.Header
+	if response != nil {
+		status = response.StatusCode
+		headers = response.Header
+	}
+	return statusErr{
+		code:       status,
+		msg:        string(body),
+		retryAfter: openAICompatRetryAfter(headers, body, time.Now()),
+	}
+}
+
+func openAICompatRetryAfter(headers http.Header, body []byte, now time.Time) *time.Duration {
+	if headers != nil {
+		if raw := strings.TrimSpace(headers.Get("Retry-After")); raw != "" {
+			if seconds, errParse := strconv.ParseInt(raw, 10, 64); errParse == nil && seconds >= 0 {
+				duration := time.Duration(seconds) * time.Second
+				return &duration
+			}
+			if deadline, errParse := http.ParseTime(raw); errParse == nil {
+				duration := max(deadline.Sub(now), time.Duration(0))
+				return &duration
+			}
+		}
+		for _, header := range []string{"X-RateLimit-Reset", "RateLimit-Reset"} {
+			raw := strings.TrimSpace(headers.Get(header))
+			if raw == "" {
+				continue
+			}
+			value, errParse := strconv.ParseInt(raw, 10, 64)
+			if errParse != nil || value < 0 {
+				continue
+			}
+			duration := time.Duration(value) * time.Second
+			if value > now.Unix() {
+				duration = time.Unix(value, 0).Sub(now)
+			}
+			if duration < 0 {
+				duration = 0
+			}
+			return &duration
+		}
+	}
+
+	for _, path := range []string{
+		"error.retry_after_ms",
+		"error.retryAfterMs",
+		"retry_after_ms",
+		"retryAfterMs",
+	} {
+		if value := gjson.GetBytes(body, path); value.Exists() && value.Int() >= 0 {
+			duration := time.Duration(value.Int()) * time.Millisecond
+			return &duration
+		}
+	}
+	for _, path := range []string{
+		"error.retry_after_seconds",
+		"error.retryAfterSeconds",
+		"retry_after_seconds",
+		"retryAfterSeconds",
+		"error.retry_after",
+		"retry_after",
+	} {
+		if value := gjson.GetBytes(body, path); value.Exists() && value.Int() >= 0 {
+			duration := time.Duration(value.Int()) * time.Second
+			return &duration
+		}
+	}
+
+	message := strings.TrimSpace(gjson.GetBytes(body, "error.message").String())
+	if message == "" {
+		message = strings.TrimSpace(string(body))
+	}
+	marker := strings.Index(strings.ToLower(message), "try again in")
+	if marker < 0 {
+		return nil
+	}
+	matches := openAICompatRetryDurationPattern.FindAllStringSubmatch(message[marker+len("try again in"):], -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	var duration time.Duration
+	for _, match := range matches {
+		value, errParse := strconv.ParseInt(match[1], 10, 64)
+		if errParse != nil {
+			continue
+		}
+		switch strings.ToLower(match[2]) {
+		case "ms":
+			duration += time.Duration(value) * time.Millisecond
+		case "s":
+			duration += time.Duration(value) * time.Second
+		case "m":
+			duration += time.Duration(value) * time.Minute
+		case "h":
+			duration += time.Duration(value) * time.Hour
+		case "d":
+			duration += time.Duration(value) * 24 * time.Hour
+		}
+	}
+	if duration <= 0 {
+		return nil
+	}
+	return &duration
 }
 
 type statusErr struct {
