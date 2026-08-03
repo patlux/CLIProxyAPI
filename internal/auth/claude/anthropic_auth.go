@@ -32,7 +32,7 @@ const (
 	RolesURL         = "https://api.anthropic.com/api/oauth/claude_cli/roles"
 	ClientID         = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	RedirectURI      = "http://localhost:54545/callback"
-	ClaudeOAuthScope = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+	ClaudeOAuthScope = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload user:design:read user:design:write"
 
 	claudeRefreshMinBackoff       = 5 * time.Second
 	claudeRefreshMaxBackoff       = 5 * time.Minute

@@ -92,7 +92,7 @@ func (e *KimiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 			if replayScope.replayApplied && shouldClearKimiThinkingReplayAfterError(errExecute) {
 				clearKimiThinkingReplayContent(ctx, replayScope)
 			}
-			return claudeResp, errExecute
+			return claudeResp, normalizeKimiQuotaError(errExecute)
 		}
 		cacheKimiThinkingReplayResponse(ctx, replayScope, claudeResp.Payload)
 		return claudeResp, nil
@@ -182,7 +182,7 @@ func (e *KimiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 		b, _ := io.ReadAll(httpResp.Body)
 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = normalizeKimiQuotaError(statusErr{code: httpResp.StatusCode, msg: string(b)})
 		return resp, err
 	}
 	data, err := io.ReadAll(httpResp.Body)
@@ -211,7 +211,7 @@ func (e *KimiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 			if replayScope.replayApplied && shouldClearKimiThinkingReplayAfterError(errExecute) {
 				clearKimiThinkingReplayContent(ctx, replayScope)
 			}
-			return nil, errExecute
+			return nil, normalizeKimiQuotaError(errExecute)
 		}
 		return wrapKimiThinkingReplayStream(ctx, claudeResult, replayScope), nil
 	}
@@ -301,7 +301,7 @@ func (e *KimiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 		if errClose := httpResp.Body.Close(); errClose != nil {
 			log.Errorf("kimi executor: close response body error: %v", errClose)
 		}
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = normalizeKimiQuotaError(statusErr{code: httpResp.StatusCode, msg: string(b)})
 		return nil, err
 	}
 	out := make(chan cliproxyexecutor.StreamChunk)
@@ -355,6 +355,34 @@ func (e *KimiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 func (e *KimiExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	auth.Attributes["base_url"] = kimiauth.KimiAPIBaseURL
 	return e.ClaudeExecutor.countTokensUpstream(ctx, auth, req, opts)
+}
+
+const kimiQuotaCooldown = 24 * time.Hour
+
+// normalizeKimiQuotaError maps Kimi's account-level quota response to 429 so
+// the auth manager cools the exhausted credential and retries another account.
+// Kimi currently returns this condition as HTTP 403 access_terminated_error,
+// which would otherwise be treated as a generic payment/permission failure.
+func normalizeKimiQuotaError(err error) error {
+	if err == nil {
+		return nil
+	}
+	statusProvider, ok := err.(interface{ StatusCode() int })
+	if !ok || statusProvider.StatusCode() != http.StatusForbidden {
+		return err
+	}
+	message := err.Error()
+	lowerMessage := strings.ToLower(message)
+	if !strings.Contains(lowerMessage, "access_terminated_error") &&
+		!strings.Contains(lowerMessage, "reached your usage limit for this billing cycle") {
+		return err
+	}
+	retryAfter := kimiQuotaCooldown
+	return statusErr{
+		code:       http.StatusTooManyRequests,
+		msg:        message,
+		retryAfter: &retryAfter,
+	}
 }
 
 func normalizeKimiToolMessageLinks(body []byte) ([]byte, error) {

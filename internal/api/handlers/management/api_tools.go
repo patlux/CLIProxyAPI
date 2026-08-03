@@ -11,13 +11,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	claudeauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/claude"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
 )
 
-const defaultAPICallTimeout = 60 * time.Second
+const (
+	defaultAPICallTimeout = 60 * time.Second
+	authTokenRefreshLead  = 5 * time.Minute
+)
 
 const (
 	antigravityOAuthClientID     = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
@@ -40,6 +44,85 @@ type apiCallResponse struct {
 	StatusCode int                 `json:"status_code"`
 	Header     map[string][]string `json:"header"`
 	Body       string              `json:"body"`
+}
+
+type authTokenRequest struct {
+	AuthIndex string `json:"auth_index"`
+	Provider  string `json:"provider"`
+}
+
+// AuthToken returns only the selected credential's current access token.
+func (h *Handler) AuthToken(c *gin.Context) {
+	var body authTokenRequest
+	if errBindJSON := c.ShouldBindJSON(&body); errBindJSON != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+
+	authIndex := strings.TrimSpace(body.AuthIndex)
+	if authIndex == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "auth_index is required"})
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(body.Provider))
+	if provider == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "provider is required"})
+		return
+	}
+
+	auth := h.authByIndex(authIndex)
+	if auth == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(auth.Provider), provider) {
+		c.JSON(http.StatusConflict, gin.H{"error": "credential provider mismatch"})
+		return
+	}
+	if auth.Disabled || auth.Status == coreauth.StatusDisabled {
+		c.JSON(http.StatusConflict, gin.H{"error": "credential is disabled"})
+		return
+	}
+	if auth.AuthKind() != coreauth.AuthKindOAuth {
+		c.JSON(http.StatusConflict, gin.H{"error": "credential is not OAuth"})
+		return
+	}
+
+	if expiresAt, okExpiration := auth.ExpirationTime(); okExpiration && time.Until(expiresAt) <= authTokenRefreshLead {
+		if h.authManager == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "credential refresh unavailable"})
+			return
+		}
+		refreshed, errRefresh := h.authManager.RefreshAuth(c.Request.Context(), auth.ID)
+		if errRefresh != nil || refreshed == nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "credential refresh failed"})
+			return
+		}
+		auth = refreshed
+	}
+
+	accessToken := tokenValueForAuth(auth)
+	if accessToken == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "credential access token not found"})
+		return
+	}
+	if expiresAt, okExpiration := auth.ExpirationTime(); okExpiration && time.Until(expiresAt) <= 0 {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "credential access token is expired"})
+		return
+	}
+
+	response := gin.H{
+		"access_token": accessToken,
+		"token_type":   "Bearer",
+		"provider":     strings.ToLower(strings.TrimSpace(auth.Provider)),
+		"auth_index":   authIndex,
+	}
+	if expiresAt, okExpiration := auth.ExpirationTime(); okExpiration {
+		response["expires_at"] = expiresAt.UTC().Format(time.RFC3339)
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Header("Pragma", "no-cache")
+	c.JSON(http.StatusOK, response)
 }
 
 // APICall makes a generic HTTP request on behalf of the management API caller.
@@ -220,6 +303,11 @@ func tokenValueForAuth(auth *coreauth.Auth) string {
 	}
 	if v := tokenValueFromMetadata(auth.Metadata); v != "" {
 		return v
+	}
+	if storage, ok := auth.Storage.(*claudeauth.ClaudeTokenStorage); ok && storage != nil {
+		if v := strings.TrimSpace(storage.AccessToken); v != "" {
+			return v
+		}
 	}
 	if auth.Attributes != nil {
 		if v := strings.TrimSpace(auth.Attributes["api_key"]); v != "" {

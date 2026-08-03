@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -70,6 +71,72 @@ func TestKimiExecutorClaudeRequestPreservesInternalModelSemantics(t *testing.T) 
 	}
 	if got := gjson.GetBytes(response.Payload, "model").String(); got != model {
 		t.Fatalf("response model = %q, want %q", got, model)
+	}
+}
+
+func TestKimiExecutorMapsAccessTerminatedQuotaToRetryable429(t *testing.T) {
+	body := `{"error":{"message":"You've reached your usage limit for this billing cycle.","type":"access_terminated_error"}}`
+	err := normalizeKimiQuotaError(statusErr{code: http.StatusForbidden, msg: body})
+
+	statusProvider, ok := err.(interface{ StatusCode() int })
+	if !ok {
+		t.Fatalf("normalized error %T does not expose StatusCode()", err)
+	}
+	if got := statusProvider.StatusCode(); got != http.StatusTooManyRequests {
+		t.Fatalf("StatusCode() = %d, want %d", got, http.StatusTooManyRequests)
+	}
+	retryProvider, ok := err.(interface{ RetryAfter() *time.Duration })
+	if !ok || retryProvider.RetryAfter() == nil {
+		t.Fatalf("normalized error %T does not expose RetryAfter()", err)
+	}
+	if got := *retryProvider.RetryAfter(); got != kimiQuotaCooldown {
+		t.Fatalf("RetryAfter() = %s, want %s", got, kimiQuotaCooldown)
+	}
+}
+
+func TestKimiExecutorPreservesUnrelatedForbiddenError(t *testing.T) {
+	original := statusErr{code: http.StatusForbidden, msg: `{"error":{"type":"permission_denied"}}`}
+	err := normalizeKimiQuotaError(original)
+
+	statusProvider, ok := err.(interface{ StatusCode() int })
+	if !ok {
+		t.Fatalf("preserved error %T does not expose StatusCode()", err)
+	}
+	if got := statusProvider.StatusCode(); got != http.StatusForbidden {
+		t.Fatalf("StatusCode() = %d, want %d", got, http.StatusForbidden)
+	}
+	if retryProvider, ok := err.(interface{ RetryAfter() *time.Duration }); ok && retryProvider.RetryAfter() != nil {
+		t.Fatalf("RetryAfter() = %s, want nil", *retryProvider.RetryAfter())
+	}
+}
+
+func TestKimiExecutorExecuteMapsAccessTerminatedQuota(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "cliproxy.roundtripper", kimiRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"error":{"message":"You've reached your usage limit for this billing cycle.","type":"access_terminated_error"}}`,
+			)),
+		}, nil
+	}))
+
+	executor := NewKimiExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		Attributes: map[string]string{},
+		Metadata:   map[string]any{"access_token": "test-token"},
+	}
+	payload := []byte(`{"model":"kimi-k2.7","messages":[{"role":"user","content":"hello"}]}`)
+	_, err := executor.Execute(ctx, auth, cliproxyexecutor.Request{
+		Model:   "kimi-k2.7",
+		Payload: payload,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI})
+	if err == nil {
+		t.Fatal("Execute() error = nil, want quota error")
+	}
+	statusProvider, ok := err.(interface{ StatusCode() int })
+	if !ok || statusProvider.StatusCode() != http.StatusTooManyRequests {
+		t.Fatalf("Execute() error = %T %v, want status 429", err, err)
 	}
 }
 
