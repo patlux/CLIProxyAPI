@@ -295,6 +295,7 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 				"compat_name":  compat.Name,
 				"provider_key": internalProviderKey,
 				"config_index": strconv.Itoa(i),
+				"runtime_only": "true",
 			}
 			metadata := map[string]any{}
 			if disableCooling {
@@ -339,6 +340,7 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 				"compat_name":  compat.Name,
 				"provider_key": internalProviderKey,
 				"config_index": strconv.Itoa(i),
+				"runtime_only": "true",
 			}
 			metadata := map[string]any{}
 			if disableCooling {

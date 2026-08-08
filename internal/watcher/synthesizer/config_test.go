@@ -558,6 +558,9 @@ func TestConfigSynthesizer_OpenAICompat_UsesNamespacedProviderKey(t *testing.T) 
 	if auth.Attributes["config_index"] != "0" {
 		t.Fatalf("config_index = %q, want 0", auth.Attributes["config_index"])
 	}
+	if auth.Attributes["runtime_only"] != "true" {
+		t.Fatalf("runtime_only = %q, want true", auth.Attributes["runtime_only"])
+	}
 }
 
 func TestConfigSynthesizer_VertexCompat(t *testing.T) {
