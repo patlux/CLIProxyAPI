@@ -14,9 +14,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/opencodego"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/credentialweight"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -25,13 +27,16 @@ import (
 var lastRefreshKeys = []string{"last_refresh", "lastRefresh", "last_refreshed_at", "lastRefreshedAt"}
 
 var (
-	callbackForwardersMu  sync.Mutex
-	callbackForwarders    = make(map[int]*callbackForwarder)
-	authFileEntryMu       sync.Mutex
-	errAuthFileMustBeJSON = errors.New("auth file must be .json")
-	errAuthFileNotFound   = errors.New("auth file not found")
-	errPluginVirtualAuth  = errors.New("plugin virtual auth cannot be modified directly; edit or delete the source auth file")
-	newCodexOAuthService  = func(cfg *config.Config) codexOAuthService { return codex.NewCodexAuth(cfg) }
+	callbackForwardersMu      sync.Mutex
+	callbackForwarders        = make(map[int]*callbackForwarder)
+	authFileEntryMu           sync.Mutex
+	errAuthFileMustBeJSON     = errors.New("auth file must be .json")
+	errAuthFileNotFound       = errors.New("auth file not found")
+	errPluginVirtualAuth      = errors.New("plugin virtual auth cannot be modified directly; edit or delete the source auth file")
+	newCodexOAuthService      = func(cfg *config.Config) codexOAuthService { return codex.NewCodexAuth(cfg) }
+	newOpenCodeGoOAuthService = func(cfg *config.Config) openCodeGoOAuthService {
+		return opencodego.NewService(cfg, "")
+	}
 )
 
 func extractLastRefreshTimestamp(meta map[string]any) (time.Time, bool) {
@@ -352,7 +357,11 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 			entry["account_type"] = accountType
 		}
 		if account != "" {
-			entry["account"] = account
+			if accountType == "api_key" {
+				entry["account"] = util.HideAPIKey(account)
+			} else {
+				entry["account"] = account
+			}
 		}
 	}
 	if !auth.CreatedAt.IsZero() {

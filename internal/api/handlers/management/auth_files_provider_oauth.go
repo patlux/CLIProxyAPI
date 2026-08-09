@@ -18,6 +18,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/claude"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kimi"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/opencodego"
 	xaiauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/xai"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
@@ -31,6 +32,11 @@ type codexOAuthService interface {
 	GenerateAuthURL(state string, pkceCodes *codex.PKCECodes) (string, error)
 	ExchangeCodeForTokens(ctx context.Context, code string, pkceCodes *codex.PKCECodes) (*codex.CodexAuthBundle, error)
 	CreateTokenStorage(bundle *codex.CodexAuthBundle) *codex.CodexTokenStorage
+}
+
+type openCodeGoOAuthService interface {
+	GenerateAuthURL(ctx context.Context, state, redirectURI string, pkce *opencodego.PKCECodes) (string, error)
+	ExchangeCodeForTokens(ctx context.Context, code, redirectURI string, pkce *opencodego.PKCECodes) (*opencodego.TokenBundle, error)
 }
 
 func (h *Handler) RequestAnthropicToken(c *gin.Context) {
@@ -339,6 +345,117 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 	}()
 
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
+}
+
+// RequestOpenCodeGoToken starts an OpenCode account login. The resulting OAuth
+// identity record is disabled until an existing OpenCode Go API key is explicitly associated.
+func (h *Handler) RequestOpenCodeGoToken(c *gin.Context) {
+	ctx := PopulateAuthContext(context.Background(), c)
+	pkceCodes, errPKCE := opencodego.GeneratePKCECodes()
+	if errPKCE != nil {
+		log.WithError(errPKCE).Error("failed to generate OpenCode Go PKCE codes")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate PKCE codes"})
+		return
+	}
+	state, errState := misc.GenerateRandomState()
+	if errState != nil {
+		log.WithError(errState).Error("failed to generate OpenCode Go OAuth state")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate state parameter"})
+		return
+	}
+	redirectURI := opencodego.DefaultRedirectURI
+	authService := newOpenCodeGoOAuthService(h.cfg)
+	authURL, errAuthURL := authService.GenerateAuthURL(ctx, state, redirectURI, pkceCodes)
+	if errAuthURL != nil {
+		log.WithError(errAuthURL).Error("failed to generate OpenCode Go authorization URL")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to generate authorization url"})
+		return
+	}
+	RegisterOAuthSession(state, opencodego.Provider)
+
+	go h.awaitOpenCodeGoCallbackAndSave(ctx, state, redirectURI, pkceCodes, authService)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "url": authURL, "state": state})
+}
+
+func (h *Handler) awaitOpenCodeGoCallbackAndSave(ctx context.Context, state, redirectURI string, pkceCodes *opencodego.PKCECodes, authService openCodeGoOAuthService) {
+	waitFile := filepath.Join(h.cfg.AuthDir, fmt.Sprintf(".oauth-%s-%s.oauth", opencodego.Provider, state))
+	deadline := time.Now().Add(5 * time.Minute)
+	var callback map[string]string
+	for {
+		if !IsOAuthSessionPending(state, opencodego.Provider) {
+			return
+		}
+		if time.Now().After(deadline) {
+			SetOAuthSessionError(state, "Timeout waiting for OAuth callback")
+			return
+		}
+		data, errRead := os.ReadFile(waitFile)
+		if errRead == nil {
+			_ = json.Unmarshal(data, &callback)
+			_ = os.Remove(waitFile)
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if errCode := strings.TrimSpace(callback["error"]); errCode != "" {
+		SetOAuthSessionError(state, "Authentication failed: "+errCode)
+		return
+	}
+	if callback["state"] != state {
+		SetOAuthSessionError(state, "State code error")
+		return
+	}
+	bundle, errExchange := authService.ExchangeCodeForTokens(ctx, callback["code"], redirectURI, pkceCodes)
+	if errExchange != nil {
+		log.WithError(errExchange).Error("failed to exchange OpenCode Go authorization code")
+		SetOAuthSessionError(state, "Failed to exchange authorization code for tokens")
+		return
+	}
+	storage := &opencodego.TokenStorage{
+		AccessToken:  bundle.AccessToken,
+		RefreshToken: bundle.RefreshToken,
+		TokenType:    bundle.TokenType,
+		ExpiresAt:    bundle.ExpiresAt.UTC().Format(time.RFC3339),
+		LastRefresh:  time.Now().UTC().Format(time.RFC3339),
+		AccountID:    bundle.AccountID,
+		Email:        bundle.Email,
+		NewAccount:   bundle.NewAccount,
+		BaseURL:      "https://opencode.ai/zen/go/v1",
+		Priority:     100,
+		Weight:       0,
+	}
+	fileName := opencodego.CredentialFileName(bundle.AccountID, bundle.Email)
+	record := &coreauth.Auth{
+		ID:       fileName,
+		Provider: opencodego.Provider,
+		FileName: fileName,
+		Label:    bundle.Email,
+		Status:   coreauth.StatusActive,
+		Storage:  storage,
+		Metadata: map[string]any{
+			"auth_kind":            coreauth.AuthKindOAuth,
+			"access_token":         bundle.AccessToken,
+			"refresh_token":        bundle.RefreshToken,
+			"token_type":           bundle.TokenType,
+			"expires_at":           bundle.ExpiresAt.UTC().Format(time.RFC3339),
+			"last_refresh":         time.Now().UTC().Format(time.RFC3339),
+			"email":                bundle.Email,
+			"account_id":           bundle.AccountID,
+			"new_account":          bundle.NewAccount,
+			"routing_key_required": true,
+			"priority":             100,
+			"weight":               0,
+		},
+	}
+	if errGuard := guardOAuthSessionPendingForSave(state, opencodego.Provider); errGuard != nil {
+		return
+	}
+	if _, errSave := h.saveTokenRecord(ctx, record); errSave != nil {
+		log.WithError(errSave).Error("failed to save OpenCode Go OAuth identity")
+		SetOAuthSessionError(state, "Failed to save authentication tokens")
+		return
+	}
+	CompleteOAuthSession(state)
 }
 
 func (h *Handler) RequestAntigravityToken(c *gin.Context) {

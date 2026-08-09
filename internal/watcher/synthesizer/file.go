@@ -196,6 +196,7 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	applyRuntimeCredentialMetadata(a, metadata)
 	// Read priority from auth file.
 	if rawPriority, ok := metadata["priority"]; ok {
 		switch v := rawPriority.(type) {
@@ -233,6 +234,22 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 		}
 	}
 	return []*coreauth.Auth{a}, nil
+}
+
+func applyRuntimeCredentialMetadata(auth *coreauth.Auth, metadata map[string]any) {
+	if auth == nil || len(metadata) == 0 {
+		return
+	}
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+	for _, key := range []string{"auth_kind", "base_url", "api_key", "compat_name", "provider_key"} {
+		value, okString := metadata[key].(string)
+		value = strings.TrimSpace(value)
+		if okString && value != "" {
+			auth.Attributes[key] = value
+		}
+	}
 }
 
 func parsePluginFileAuths(parser PluginAuthParser, req pluginapi.AuthParseRequest) ([]*coreauth.Auth, bool, error) {

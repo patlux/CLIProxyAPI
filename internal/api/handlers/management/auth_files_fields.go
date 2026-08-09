@@ -460,6 +460,27 @@ func syncAuthFileMetadataFields(auth *coreauth.Auth, touchedRoots map[string]str
 	if _, ok := touchedRoots["disabled"]; ok {
 		syncAuthFileDisabledState(auth)
 	}
+	for _, key := range []string{"auth_kind", "base_url", "api_key", "compat_name", "provider_key"} {
+		if _, ok := touchedRoots[key]; ok {
+			syncAuthFileStringAttribute(auth, key)
+		}
+	}
+}
+
+func syncAuthFileStringAttribute(auth *coreauth.Auth, key string) {
+	if auth == nil {
+		return
+	}
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+	value, okString := auth.Metadata[key].(string)
+	value = strings.TrimSpace(value)
+	if !okString || value == "" {
+		delete(auth.Attributes, key)
+		return
+	}
+	auth.Attributes[key] = value
 }
 
 func syncAuthFileHeaderAttributes(auth *coreauth.Auth) {

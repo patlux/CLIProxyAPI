@@ -144,6 +144,16 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	case "kimi":
 		models = registry.GetKimiModels()
 		models = applyExcludedModels(models, excluded)
+	case "opencode-go":
+		for i := range s.cfg.OpenAICompatibility {
+			compat := &s.cfg.OpenAICompatibility[i]
+			if compat.Disabled || !strings.EqualFold(strings.TrimSpace(compat.Name), "opencode-go") {
+				continue
+			}
+			models = buildOpenAICompatibilityConfigModels(compat)
+			break
+		}
+		models = applyExcludedModels(models, excluded)
 	case "xai":
 		models = registry.GetXAIModels()
 		if entry := s.resolveConfigXAIKey(a); entry != nil {

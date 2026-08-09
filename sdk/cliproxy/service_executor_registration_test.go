@@ -89,6 +89,7 @@ func TestRegisterAvailableExecutors(t *testing.T) {
 		"kimi",
 		"xai",
 		"openai-compatibility",
+		"opencode-go",
 		"plugin-provider",
 	}
 	for _, provider := range providers {
@@ -101,6 +102,18 @@ func TestRegisterAvailableExecutors(t *testing.T) {
 	resolved, _ := service.coreManager.Executor("plugin-provider")
 	if _, isPlugin := resolved.(serviceTestPluginExecutor); !isPlugin {
 		t.Fatalf("executor type = %T, want serviceTestPluginExecutor", resolved)
+	}
+}
+
+func TestRegisterExecutorForOpenCodeGoAuthUsesDedicatedExecutor(t *testing.T) {
+	service := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+	service.registerExecutorForAuth(&coreauth.Auth{ID: "opencode-account", Provider: "opencode-go"}, true)
+	resolved, ok := service.coreManager.Executor("opencode-go")
+	if !ok {
+		t.Fatal("expected OpenCode Go executor")
+	}
+	if _, dedicated := resolved.(*runtimeexecutor.OpenCodeGoExecutor); !dedicated {
+		t.Fatalf("executor type = %T, want *executor.OpenCodeGoExecutor", resolved)
 	}
 }
 

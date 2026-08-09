@@ -368,6 +368,8 @@ func NormalizeOAuthProvider(provider string) (string, error) {
 		return "antigravity", nil
 	case "xai", "x-ai", "x.ai", "grok":
 		return "xai", nil
+	case "opencode-go", "opencodego":
+		return "opencode-go", nil
 	default:
 		return "", errUnsupportedOAuthFlow
 	}
@@ -445,10 +447,46 @@ func writeOAuthCallbackFile(authDir, canonicalProvider, state, code, errorMessag
 	if err != nil {
 		return "", fmt.Errorf("marshal oauth callback payload: %w", err)
 	}
-	if err := os.WriteFile(filePath, data, 0o600); err != nil {
-		return "", fmt.Errorf("write oauth callback file: %w", err)
+	if err := writeOAuthCallbackFileAtomic(filePath, data); err != nil {
+		return "", err
 	}
 	return filePath, nil
+}
+
+func writeOAuthCallbackFileAtomic(filePath string, data []byte) error {
+	dir := filepath.Dir(filePath)
+	temp, errTemp := os.CreateTemp(dir, ".oauth-callback-*.tmp")
+	if errTemp != nil {
+		return fmt.Errorf("create oauth callback temp file: %w", errTemp)
+	}
+	tempPath := temp.Name()
+	defer func() { _ = os.Remove(tempPath) }()
+	if errChmod := temp.Chmod(0o600); errChmod != nil {
+		_ = temp.Close()
+		return fmt.Errorf("chmod oauth callback temp file: %w", errChmod)
+	}
+	if _, errWrite := temp.Write(data); errWrite != nil {
+		_ = temp.Close()
+		return fmt.Errorf("write oauth callback temp file: %w", errWrite)
+	}
+	if errSync := temp.Sync(); errSync != nil {
+		_ = temp.Close()
+		return fmt.Errorf("sync oauth callback temp file: %w", errSync)
+	}
+	if errClose := temp.Close(); errClose != nil {
+		return fmt.Errorf("close oauth callback temp file: %w", errClose)
+	}
+	if errRename := os.Rename(tempPath, filePath); errRename != nil {
+		return fmt.Errorf("replace oauth callback file: %w", errRename)
+	}
+	directory, errOpenDir := os.Open(dir)
+	if errOpenDir == nil {
+		defer func() { _ = directory.Close() }()
+		if errSyncDir := directory.Sync(); errSyncDir != nil {
+			return fmt.Errorf("sync oauth callback directory: %w", errSyncDir)
+		}
+	}
+	return nil
 }
 
 func WriteOAuthCallbackFileForPendingSession(authDir, provider, state, code, errorMessage string) (string, error) {
