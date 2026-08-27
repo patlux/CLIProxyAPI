@@ -6,15 +6,20 @@ import (
 )
 
 // ApplyCustomHeadersFromAttrs applies user-defined headers stored in the provided attributes map.
-// Custom headers override built-in defaults when conflicts occur.
-func ApplyCustomHeadersFromAttrs(r *http.Request, attrs map[string]string) {
+// Custom headers override built-in defaults when conflicts occur. Values beginning with "$" are
+// resolved from clientHeaders and omitted when the corresponding inbound header is unavailable.
+func ApplyCustomHeadersFromAttrs(r *http.Request, attrs map[string]string, clientHeaders ...http.Header) {
 	if r == nil {
 		return
 	}
-	applyCustomHeaders(r, extractCustomHeaders(attrs))
+	var inbound http.Header
+	if len(clientHeaders) > 0 {
+		inbound = clientHeaders[0]
+	}
+	applyCustomHeaders(r, extractCustomHeaders(attrs, inbound))
 }
 
-func extractCustomHeaders(attrs map[string]string) map[string]string {
+func extractCustomHeaders(attrs map[string]string, clientHeaders http.Header) map[string]string {
 	if len(attrs) == 0 {
 		return nil
 	}
@@ -30,6 +35,16 @@ func extractCustomHeaders(attrs map[string]string) map[string]string {
 		val := strings.TrimSpace(v)
 		if val == "" {
 			continue
+		}
+		if strings.HasPrefix(val, "$") {
+			source := strings.TrimSpace(strings.TrimPrefix(val, "$"))
+			if source == "" || clientHeaders == nil {
+				continue
+			}
+			val = clientHeaders.Get(source)
+			if val == "" {
+				continue
+			}
 		}
 		headers[name] = val
 	}
