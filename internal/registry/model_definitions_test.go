@@ -79,6 +79,16 @@ func TestWithClaudeBuiltinsIncludesFable51AndReplacesRemoteMetadata(t *testing.T
 	}
 }
 
+func TestLookupStaticModelInfoFindsFable51Builtin(t *testing.T) {
+	model := LookupStaticModelInfo(claudeBuiltinFable51ModelID)
+	if model == nil {
+		t.Fatal("LookupStaticModelInfo(Fable 5.1) = nil")
+	}
+	if model.ContextLength != 1000000 || model.MaxCompletionTokens != 128000 {
+		t.Fatalf("Fable 5.1 limits = %d/%d, want 1000000/128000", model.ContextLength, model.MaxCompletionTokens)
+	}
+}
+
 func TestWithXAIBuiltinsIncludesVideo15GAAndPreviewAlias(t *testing.T) {
 	models := WithXAIBuiltins(nil)
 	foundGA := false

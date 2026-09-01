@@ -368,6 +368,9 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 	if modelID == "" {
 		return nil
 	}
+	if modelID == claudeBuiltinFable51ModelID {
+		return claudeBuiltinFable51ModelInfo()
+	}
 
 	data := getModels()
 	allModels := [][]*ModelInfo{
