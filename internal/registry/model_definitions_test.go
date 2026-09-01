@@ -55,6 +55,30 @@ func TestWithXAIBuiltinsIncludesImage20(t *testing.T) {
 	t.Fatalf("expected xAI builtin model %s", xaiBuiltinImage20ModelID)
 }
 
+func TestWithClaudeBuiltinsIncludesFable51AndReplacesRemoteMetadata(t *testing.T) {
+	models := WithClaudeBuiltins([]*ModelInfo{{
+		ID:          claudeBuiltinFable51ModelID,
+		DisplayName: "stale remote entry",
+	}})
+
+	matches := 0
+	for _, model := range models {
+		if model == nil || model.ID != claudeBuiltinFable51ModelID {
+			continue
+		}
+		matches++
+		if model.DisplayName != "Claude Fable 5.1" {
+			t.Fatalf("DisplayName = %q, want Claude Fable 5.1", model.DisplayName)
+		}
+		if model.Thinking == nil || !model.Thinking.DynamicAllowed || model.Thinking.ZeroAllowed {
+			t.Fatalf("Thinking = %#v, want always-on adaptive thinking", model.Thinking)
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("Fable 5.1 matches = %d, want 1", matches)
+	}
+}
+
 func TestWithXAIBuiltinsIncludesVideo15GAAndPreviewAlias(t *testing.T) {
 	models := WithXAIBuiltins(nil)
 	foundGA := false
