@@ -57,6 +57,45 @@ func TestOpenCodeGoExecutorRoutesMuseToResponses(t *testing.T) {
 	}
 }
 
+func TestConfiguredOpenCodeGoProviderRoutesMuseToResponses(t *testing.T) {
+	var gotPath string
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		body, errRead := io.ReadAll(r.Body)
+		if errRead != nil {
+			t.Errorf("read request: %v", errRead)
+		}
+		if errUnmarshal := json.Unmarshal(body, &gotPayload); errUnmarshal != nil {
+			t.Errorf("decode request: %v", errUnmarshal)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","object":"response","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`))
+	}))
+	defer server.Close()
+
+	executor := NewOpenAICompatExecutor("openai-compatible-opencode-go", &config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL,
+		"api_key":  "test-key",
+	}}
+	req := cliproxyexecutor.Request{
+		Model:   "muse-spark-1.3-contributor",
+		Payload: []byte(`{"model":"muse-spark-1.3-contributor","input":"hi"}`),
+	}
+	if _, errExecute := executor.Execute(context.Background(), auth, req, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatOpenAIResponse,
+	}); errExecute != nil {
+		t.Fatalf("Execute() error = %v", errExecute)
+	}
+	if gotPath != "/responses" {
+		t.Fatalf("request path = %q, want /responses", gotPath)
+	}
+	if _, exists := gotPayload["input"]; !exists {
+		t.Fatalf("responses payload is missing input: %#v", gotPayload)
+	}
+}
+
 func TestOpenCodeGoExecutorKeepsChatModelsOnChatCompletions(t *testing.T) {
 	var gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

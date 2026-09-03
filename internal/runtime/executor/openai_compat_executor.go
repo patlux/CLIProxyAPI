@@ -48,7 +48,16 @@ type OpenAICompatExecutor struct {
 
 // NewOpenAICompatExecutor creates an executor bound to a provider key (e.g., "openrouter").
 func NewOpenAICompatExecutor(provider string, cfg *config.Config) *OpenAICompatExecutor {
-	return &OpenAICompatExecutor{provider: provider, cfg: cfg}
+	executor := &OpenAICompatExecutor{provider: provider, cfg: cfg}
+	if strings.EqualFold(strings.TrimSpace(provider), "openai-compatible-opencode-go") {
+		executor.withResponsesModels(
+			"gpt-5.6-luna",
+			"grok-4.6",
+			"muse-spark-1.2-contributor",
+			"muse-spark-1.3-contributor",
+		)
+	}
+	return executor
 }
 
 func (e *OpenAICompatExecutor) withResponsesModels(models ...string) *OpenAICompatExecutor {
