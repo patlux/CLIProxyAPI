@@ -464,8 +464,9 @@ func TestCodexClientModelsResponseUsesProvidedCapabilitiesForNewHomeModel(t *tes
 	const wantContextWindow = 1048576
 
 	resp := BuildResponse([]map[string]any{{
-		"id":             modelID,
-		"context_length": wantContextWindow,
+		"id":                         modelID,
+		"context_length":             wantContextWindow,
+		"supported_input_modalities": []string{"text", "image"},
 		"thinking": &registry.ThinkingSupport{
 			Levels: []string{"low", "medium", "high"},
 		},
@@ -480,6 +481,10 @@ func TestCodexClientModelsResponseUsesProvidedCapabilitiesForNewHomeModel(t *tes
 	}
 	if got := intModelValue(model, "max_context_window"); got != wantContextWindow {
 		t.Fatalf("max_context_window = %d, want %d", got, wantContextWindow)
+	}
+	modalities, ok := model["input_modalities"].([]any)
+	if !ok || len(modalities) != 2 || modalities[0] != "text" || modalities[1] != "image" {
+		t.Fatalf("input_modalities = %#v, want [text image]", model["input_modalities"])
 	}
 
 	rawLevels, ok := model["supported_reasoning_levels"].([]any)

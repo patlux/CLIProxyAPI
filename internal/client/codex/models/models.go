@@ -252,6 +252,7 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 	description := stringModelValue(model, "description")
 	contextWindow := intModelValue(model, "context_length")
 	thinkingSupport := codexClientThinkingSupport(model)
+	inputModalities := stringSliceModelValue(model, "supported_input_modalities")
 
 	if info != nil {
 		if info.DisplayName != "" {
@@ -267,12 +268,15 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 			entry["visibility"] = "hide"
 			delete(entry, "input_modalities")
 			delete(entry, "supports_image_detail_original")
-		} else {
-			applyCodexClientInputModalitiesMetadata(entry, info.SupportedInputModalities)
+		} else if len(inputModalities) == 0 {
+			inputModalities = info.SupportedInputModalities
 		}
 		if thinkingSupport == nil {
 			thinkingSupport = info.Thinking
 		}
+	}
+	if info == nil || info.Type != registry.OpenAIImageModelType {
+		applyCodexClientInputModalitiesMetadata(entry, inputModalities)
 	}
 	applyCodexClientThinkingMetadata(entry, thinkingSupport, clientVersion)
 
@@ -309,6 +313,27 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 	}
 	if plans, ok := model["available_in_plans"]; ok {
 		entry["available_in_plans"] = cloneCodexClientModelValue(plans)
+	}
+}
+
+func stringSliceModelValue(model map[string]any, key string) []string {
+	raw, ok := model[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch values := raw.(type) {
+	case []string:
+		return append([]string(nil), values...)
+	case []any:
+		result := make([]string, 0, len(values))
+		for _, value := range values {
+			if text, ok := value.(string); ok {
+				result = append(result, text)
+			}
+		}
+		return result
+	default:
+		return nil
 	}
 }
 
