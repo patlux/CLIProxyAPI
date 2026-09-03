@@ -24,7 +24,7 @@ func TestIsGrokShellUserAgent(t *testing.T) {
 
 func TestBuildResponse(t *testing.T) {
 	response := BuildResponse([]ModelInfo{
-		{ID: "grok-4", DisplayName: "Grok 4", ContextLength: 256000, ReasoningLevels: []string{"high"}},
+		{ID: "grok-4", DisplayName: "Grok 4", ContextLength: 256000, InputModalities: []string{"text", "image", "video"}, ReasoningLevels: []string{"high"}},
 		{ID: "plain-model", ContextLength: 0},
 	})
 
@@ -40,6 +40,9 @@ func TestBuildResponse(t *testing.T) {
 	}
 	if entry.APIBackend != "responses" || !entry.SupportedInAPI {
 		t.Fatalf("entry fixed fields = %#v", entry)
+	}
+	if len(entry.InputModalities) != 2 || entry.InputModalities[0] != "text" || entry.InputModalities[1] != "image" {
+		t.Fatalf("input modalities = %#v", entry.InputModalities)
 	}
 	if len(entry.ReasoningEfforts) != 1 || entry.ReasoningEfforts[0].Value != "high" {
 		t.Fatalf("reasoning efforts = %#v", entry.ReasoningEfforts)

@@ -7,6 +7,7 @@ type ModelInfo struct {
 	ID              string
 	DisplayName     string
 	ContextLength   int
+	InputModalities []string
 	ReasoningLevels []string
 }
 
@@ -23,6 +24,7 @@ type ModelEntry struct {
 	ContextWindow    int               `json:"context_window,omitempty"`
 	APIBackend       string            `json:"api_backend"`
 	SupportedInAPI   bool              `json:"supported_in_api"`
+	InputModalities  []string          `json:"input_modalities,omitempty"`
 	ReasoningEfforts []ReasoningEffort `json:"reasoning_efforts,omitempty"`
 }
 
@@ -47,6 +49,14 @@ func BuildResponse(models []ModelInfo) Response {
 			name = m.ID
 		}
 
+		var inputModalities []string
+		for _, modality := range m.InputModalities {
+			trimmed := strings.ToLower(strings.TrimSpace(modality))
+			if trimmed == "text" || trimmed == "image" {
+				inputModalities = append(inputModalities, trimmed)
+			}
+		}
+
 		var efforts []ReasoningEffort
 		for _, level := range m.ReasoningLevels {
 			trimmed := strings.TrimSpace(level)
@@ -61,6 +71,7 @@ func BuildResponse(models []ModelInfo) Response {
 			Name:             name,
 			APIBackend:       "responses",
 			SupportedInAPI:   true,
+			InputModalities:  inputModalities,
 			ReasoningEfforts: efforts,
 		}
 

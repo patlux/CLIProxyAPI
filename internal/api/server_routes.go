@@ -586,9 +586,10 @@ func grokModelsFromHomeEntries(entries []homeModelEntry) []grokbuild.ModelInfo {
 	models := make([]grokbuild.ModelInfo, 0, len(entries))
 	for _, entry := range entries {
 		models = append(models, grokbuild.ModelInfo{
-			ID:            entry.id,
-			DisplayName:   entry.displayName,
-			ContextLength: entry.contextLength,
+			ID:              entry.id,
+			DisplayName:     entry.displayName,
+			ContextLength:   entry.contextLength,
+			InputModalities: append([]string(nil), entry.inputModalities...),
 		})
 	}
 	return models
@@ -601,9 +602,10 @@ func grokModelsFromRegistryInfos(infos []*registry.ModelInfo) []grokbuild.ModelI
 			continue
 		}
 		model := grokbuild.ModelInfo{
-			ID:            info.ID,
-			DisplayName:   info.DisplayName,
-			ContextLength: info.ContextLength,
+			ID:              info.ID,
+			DisplayName:     info.DisplayName,
+			ContextLength:   info.ContextLength,
+			InputModalities: append([]string(nil), info.SupportedInputModalities...),
 		}
 		if info.Thinking != nil {
 			model.ReasoningLevels = append([]string(nil), info.Thinking.Levels...)
