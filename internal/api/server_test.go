@@ -2491,7 +2491,8 @@ func TestDecodeHomeModelsKeepsTokenMetadata(t *testing.T) {
 				"created": 1771372800,
 				"owned_by": "anthropic",
 				"context_length": 200000,
-				"max_completion_tokens": 64000
+				"max_completion_tokens": 64000,
+				"supported_input_modalities": ["text", "image"]
 			}
 		],
 		"gemini": [
@@ -2523,6 +2524,9 @@ func TestDecodeHomeModelsKeepsTokenMetadata(t *testing.T) {
 	if claudeEntry.contextLength != 200000 || claudeEntry.maxCompletionTokens != 64000 {
 		t.Fatalf("claude token metadata = %d/%d, want 200000/64000", claudeEntry.contextLength, claudeEntry.maxCompletionTokens)
 	}
+	if !reflect.DeepEqual(claudeEntry.inputModalities, []string{"text", "image"}) {
+		t.Fatalf("claude input modalities = %#v, want text/image", claudeEntry.inputModalities)
+	}
 	geminiEntry, ok := byID["gemini-3-pro"]
 	if !ok {
 		t.Fatalf("expected gemini-3-pro entry, got %v", byID)
@@ -2540,6 +2544,10 @@ func TestDecodeHomeModelsKeepsTokenMetadata(t *testing.T) {
 	}
 	if got, ok := formatted["thinking"].(*registry.ThinkingSupport); !ok || !reflect.DeepEqual(got.Levels, []string{"low", "medium", "high"}) {
 		t.Fatalf("formatted Gemini thinking metadata = %#v, want low/medium/high", formatted["thinking"])
+	}
+	formattedClaude := formatHomeCodexModel(claudeEntry)
+	if got, ok := formattedClaude["supported_input_modalities"].([]string); !ok || !reflect.DeepEqual(got, []string{"text", "image"}) {
+		t.Fatalf("formatted Claude input modalities = %#v, want text/image", formattedClaude["supported_input_modalities"])
 	}
 }
 

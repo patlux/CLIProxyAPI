@@ -664,6 +664,9 @@ func formatHomeCodexModel(entry homeModelEntry) map[string]any {
 	if entry.maxCompletionTokens > 0 {
 		model["max_completion_tokens"] = entry.maxCompletionTokens
 	}
+	if len(entry.inputModalities) > 0 {
+		model["supported_input_modalities"] = append([]string(nil), entry.inputModalities...)
+	}
 	if entry.thinking != nil {
 		model["thinking"] = entry.thinking
 	}
@@ -699,6 +702,7 @@ type homeModelEntry struct {
 	displayName         string
 	contextLength       int
 	maxCompletionTokens int
+	inputModalities     []string
 	thinking            *registry.ThinkingSupport
 }
 
@@ -996,6 +1000,12 @@ func decodeHomeModels(raw []byte) ([]homeModelEntry, error) {
 				displayName = strings.TrimSpace(displayName)
 			}
 			thinking := homeModelThinkingSupport(model)
+			inputModalities := homeModelStringSliceValue(
+				model,
+				"supported_input_modalities",
+				"supportedInputModalities",
+				"input_modalities",
+			)
 
 			out = append(out, homeModelEntry{
 				id:                  id,
@@ -1004,6 +1014,7 @@ func decodeHomeModels(raw []byte) ([]homeModelEntry, error) {
 				displayName:         displayName,
 				contextLength:       int(homeModelInt64Value(model, "context_length", "contextLength", "inputTokenLimit", "max_input_tokens")),
 				maxCompletionTokens: int(homeModelInt64Value(model, "max_completion_tokens", "maxCompletionTokens", "outputTokenLimit", "max_tokens")),
+				inputModalities:     inputModalities,
 				thinking:            thinking,
 			})
 		}
@@ -1030,6 +1041,28 @@ func homeModelThinkingSupport(model map[string]any) *registry.ThinkingSupport {
 		return nil
 	}
 	return &thinking
+}
+
+func homeModelStringSliceValue(model map[string]any, keys ...string) []string {
+	for _, key := range keys {
+		raw, ok := model[key]
+		if !ok || raw == nil {
+			continue
+		}
+		switch values := raw.(type) {
+		case []string:
+			return append([]string(nil), values...)
+		case []any:
+			result := make([]string, 0, len(values))
+			for _, value := range values {
+				if text, ok := value.(string); ok {
+					result = append(result, text)
+				}
+			}
+			return result
+		}
+	}
+	return nil
 }
 
 func homeModelInt64Value(model map[string]any, keys ...string) int64 {
