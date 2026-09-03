@@ -41,13 +41,24 @@ const (
 // It performs request/response translation and executes against the provider base URL
 // using per-auth credentials (API key) and per-auth HTTP transport (proxy) from context.
 type OpenAICompatExecutor struct {
-	provider string
-	cfg      *config.Config
+	provider        string
+	cfg             *config.Config
+	responsesModels map[string]struct{}
 }
 
 // NewOpenAICompatExecutor creates an executor bound to a provider key (e.g., "openrouter").
 func NewOpenAICompatExecutor(provider string, cfg *config.Config) *OpenAICompatExecutor {
 	return &OpenAICompatExecutor{provider: provider, cfg: cfg}
+}
+
+func (e *OpenAICompatExecutor) withResponsesModels(models ...string) *OpenAICompatExecutor {
+	e.responsesModels = make(map[string]struct{}, len(models))
+	for _, model := range models {
+		if model = strings.TrimSpace(model); model != "" {
+			e.responsesModels[model] = struct{}{}
+		}
+	}
+	return e
 }
 
 // Identifier implements cliproxyauth.ProviderExecutor.
@@ -109,6 +120,9 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	if opts.Alt == "responses/compact" {
 		to = sdktranslator.FromString("openai-response")
 		endpoint = "/responses/compact"
+	} else if sourceFormatEqual(from, sdktranslator.FormatOpenAIResponse) && e.usesResponsesEndpoint(baseModel, helps.PayloadRequestedModel(opts, req.Model)) {
+		to = sdktranslator.FromString("openai-response")
+		endpoint = "/responses"
 	}
 	originalPayloadSource := req.Payload
 	if len(opts.OriginalRequest) > 0 {
@@ -324,6 +338,11 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	from := opts.SourceFormat
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	to := sdktranslator.FromString("openai")
+	endpoint := "/chat/completions"
+	if sourceFormatEqual(from, sdktranslator.FormatOpenAIResponse) && e.usesResponsesEndpoint(baseModel, helps.PayloadRequestedModel(opts, req.Model)) {
+		to = sdktranslator.FromString("openai-response")
+		endpoint = "/responses"
+	}
 	originalPayloadSource := req.Payload
 	if len(opts.OriginalRequest) > 0 {
 		originalPayloadSource = opts.OriginalRequest
@@ -351,12 +370,14 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		}
 	}
 
-	// Request usage data in the final streaming chunk so that token statistics
-	// are captured even when the upstream is an OpenAI-compatible provider.
-	translated = helps.SetBoolIfDifferent(translated, "stream_options.include_usage", true)
+	// Request usage data in the final streaming chunk for Chat Completions.
+	// Responses streams include usage in their terminal response event.
+	if endpoint == "/chat/completions" {
+		translated = helps.SetBoolIfDifferent(translated, "stream_options.include_usage", true)
+	}
 	reporter.SetTranslatedReasoningEffort(translated, to.String())
 
-	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
 	if err != nil {
 		return nil, err
@@ -491,7 +512,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 					return true
 				}
 			}
-			if isDone {
+			if isDone || (endpoint == "/responses" && openAIResponsesTerminalEvent(eventName)) {
 				seenDone = true
 				return true
 			}
@@ -869,6 +890,27 @@ func rewriteOpenAICompatImagesMultipartPayload(payload []byte, model string, bou
 		return nil, "", fmt.Errorf("close multipart writer failed: %w", errClose)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
+}
+
+func (e *OpenAICompatExecutor) usesResponsesEndpoint(baseModel, requestedModel string) bool {
+	if len(e.responsesModels) == 0 {
+		return false
+	}
+	for _, model := range []string{baseModel, requestedModel} {
+		if _, ok := e.responsesModels[strings.TrimSpace(model)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func openAIResponsesTerminalEvent(eventName string) bool {
+	switch strings.TrimSpace(eventName) {
+	case "response.completed", "response.failed", "response.incomplete":
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *OpenAICompatExecutor) applyPromptCacheKey(ctx context.Context, auth *cliproxyauth.Auth, from sdktranslator.Format, baseModel string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, translated []byte) ([]byte, error) {

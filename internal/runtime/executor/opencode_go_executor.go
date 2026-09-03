@@ -21,8 +21,13 @@ type OpenCodeGoExecutor struct {
 
 func NewOpenCodeGoExecutor(cfg *config.Config) *OpenCodeGoExecutor {
 	return &OpenCodeGoExecutor{
-		OpenAICompatExecutor: NewOpenAICompatExecutor(opencodego.Provider, cfg),
-		cfg:                  cfg,
+		OpenAICompatExecutor: NewOpenAICompatExecutor(opencodego.Provider, cfg).withResponsesModels(
+			"gpt-5.6-luna",
+			"grok-4.6",
+			"muse-spark-1.2-contributor",
+			"muse-spark-1.3-contributor",
+		),
+		cfg: cfg,
 	}
 }
 
