@@ -107,6 +107,7 @@ func (e *OpenAICompatExecutor) HttpRequest(ctx context.Context, auth *cliproxyau
 }
 
 func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	if endpointPath := openAICompatImageEndpointPath(opts); endpointPath != "" {
 		return e.executeImages(ctx, auth, req, opts, endpointPath)
 	}
@@ -217,7 +218,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		b, _ := io.ReadAll(httpResp.Body)
 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = newOpenAICompatStatusError(httpResp.StatusCode, httpResp.Header, b)
 		return resp, err
 	}
 	body, err := io.ReadAll(httpResp.Body)
@@ -318,7 +319,7 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
-		err = statusErr{code: httpResp.StatusCode, msg: string(body)}
+		err = newOpenAICompatStatusError(httpResp.StatusCode, httpResp.Header, body)
 		return resp, err
 	}
 
@@ -329,6 +330,7 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 }
 
 func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
+	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	if endpointPath := openAICompatImageEndpointPath(opts); endpointPath != "" {
 		return e.executeImagesStream(ctx, auth, req, opts, endpointPath)
 	}
@@ -436,7 +438,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		if errClose := httpResp.Body.Close(); errClose != nil {
 			log.Errorf("openai compat executor: close response body error: %v", errClose)
 		}
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = newOpenAICompatStatusError(httpResp.StatusCode, httpResp.Header, b)
 		return nil, err
 	}
 	out := make(chan cliproxyexecutor.StreamChunk)
@@ -1028,21 +1030,76 @@ func (e *OpenAICompatExecutor) overrideModel(payload []byte, model string) []byt
 
 var openAICompatRetryDurationPattern = regexp.MustCompile(`(?i)([0-9]+)\s*(ms|s|m|h|d)`)
 
-func openAICompatStatusError(response *http.Response, body []byte) statusErr {
-	status := 0
-	var headers http.Header
-	if response != nil {
-		status = response.StatusCode
-		headers = response.Header
+const openAICompatTPMFallbackRetryAfter = time.Minute
+
+func openAICompatErrorEvent(eventName string) bool {
+	return strings.EqualFold(eventName, "error") || strings.EqualFold(eventName, "response.error") || strings.EqualFold(eventName, "response.failed")
+}
+
+func openAICompatStreamDataError(payload []byte, eventName string) (statusErr, bool) {
+	if len(payload) == 0 || !json.Valid(payload) {
+		return statusErr{}, false
 	}
+	payloadType := gjson.GetBytes(payload, "type").String()
+	hasError := false
+	for _, path := range []string{"error", "response.error"} {
+		errorNode := gjson.GetBytes(payload, path)
+		if errorNode.Exists() && errorNode.Raw != "null" {
+			hasError = true
+			break
+		}
+	}
+	hasTopLevelErrorFields := gjson.GetBytes(payload, "code").Exists() && gjson.GetBytes(payload, "message").Exists()
+	if !hasError && !strings.EqualFold(payloadType, "error") && !strings.EqualFold(payloadType, "response.error") && !strings.EqualFold(payloadType, "response.failed") &&
+		!openAICompatErrorEvent(eventName) && !hasTopLevelErrorFields {
+		return statusErr{}, false
+	}
+
+	status := 0
+	for _, path := range []string{"status", "status_code", "error.status", "error.status_code", "response.error.status", "response.error.status_code"} {
+		status = int(gjson.GetBytes(payload, path).Int())
+		if status >= http.StatusBadRequest && status <= 599 {
+			break
+		}
+	}
+	if status < http.StatusBadRequest || status > 599 {
+		status = http.StatusBadGateway
+	}
+	return statusErr{code: status, msg: string(payload)}, true
+}
+
+type statusErr struct {
+	code             int
+	msg              string
+	retryAfter       *time.Duration
+	credentialScoped bool
+}
+
+func (e statusErr) Error() string {
+	if e.msg != "" {
+		return e.msg
+	}
+	return fmt.Sprintf("status %d", e.code)
+}
+func (e statusErr) StatusCode() int            { return e.code }
+func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
+func (e statusErr) IsCredentialScoped() bool   { return e.credentialScoped }
+
+func newOpenAICompatStatusError(status int, headers http.Header, body []byte) statusErr {
 	return statusErr{
 		code:       status,
 		msg:        string(body),
-		retryAfter: openAICompatRetryAfter(headers, body, time.Now()),
+		retryAfter: openAICompatRetryAfter(status, headers, body, time.Now()),
 	}
 }
 
-func openAICompatRetryAfter(headers http.Header, body []byte, now time.Time) *time.Duration {
+// openAICompatRetryAfter preserves explicit provider retry signals. For 429s
+// without a deadline it also applies a one-minute TPM fallback so large
+// requests are not immediately replayed.
+func openAICompatRetryAfter(status int, headers http.Header, body []byte, now time.Time) *time.Duration {
+	if status != http.StatusTooManyRequests {
+		return nil
+	}
 	if headers != nil {
 		if raw := strings.TrimSpace(headers.Get("Retry-After")); raw != "" {
 			if seconds, errParse := strconv.ParseInt(raw, 10, 64); errParse == nil && seconds >= 0 {
@@ -1103,86 +1160,39 @@ func openAICompatRetryAfter(headers http.Header, body []byte, now time.Time) *ti
 	if message == "" {
 		message = strings.TrimSpace(string(body))
 	}
-	marker := strings.Index(strings.ToLower(message), "try again in")
-	if marker < 0 {
-		return nil
-	}
-	matches := openAICompatRetryDurationPattern.FindAllStringSubmatch(message[marker+len("try again in"):], -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	var duration time.Duration
-	for _, match := range matches {
-		value, errParse := strconv.ParseInt(match[1], 10, 64)
-		if errParse != nil {
-			continue
+	lowerMessage := strings.ToLower(message)
+	marker := strings.Index(lowerMessage, "try again in")
+	if marker >= 0 {
+		matches := openAICompatRetryDurationPattern.FindAllStringSubmatch(message[marker+len("try again in"):], -1)
+		var duration time.Duration
+		for _, match := range matches {
+			value, errParse := strconv.ParseInt(match[1], 10, 64)
+			if errParse != nil {
+				continue
+			}
+			switch strings.ToLower(match[2]) {
+			case "ms":
+				duration += time.Duration(value) * time.Millisecond
+			case "s":
+				duration += time.Duration(value) * time.Second
+			case "m":
+				duration += time.Duration(value) * time.Minute
+			case "h":
+				duration += time.Duration(value) * time.Hour
+			case "d":
+				duration += time.Duration(value) * 24 * time.Hour
+			}
 		}
-		switch strings.ToLower(match[2]) {
-		case "ms":
-			duration += time.Duration(value) * time.Millisecond
-		case "s":
-			duration += time.Duration(value) * time.Second
-		case "m":
-			duration += time.Duration(value) * time.Minute
-		case "h":
-			duration += time.Duration(value) * time.Hour
-		case "d":
-			duration += time.Duration(value) * 24 * time.Hour
-		}
-	}
-	if duration <= 0 {
-		return nil
-	}
-	return &duration
-}
-
-func openAICompatErrorEvent(eventName string) bool {
-	return strings.EqualFold(eventName, "error") || strings.EqualFold(eventName, "response.error") || strings.EqualFold(eventName, "response.failed")
-}
-
-func openAICompatStreamDataError(payload []byte, eventName string) (statusErr, bool) {
-	if len(payload) == 0 || !json.Valid(payload) {
-		return statusErr{}, false
-	}
-	payloadType := gjson.GetBytes(payload, "type").String()
-	hasError := false
-	for _, path := range []string{"error", "response.error"} {
-		errorNode := gjson.GetBytes(payload, path)
-		if errorNode.Exists() && errorNode.Raw != "null" {
-			hasError = true
-			break
+		if duration > 0 {
+			return &duration
 		}
 	}
-	hasTopLevelErrorFields := gjson.GetBytes(payload, "code").Exists() && gjson.GetBytes(payload, "message").Exists()
-	if !hasError && !strings.EqualFold(payloadType, "error") && !strings.EqualFold(payloadType, "response.error") && !strings.EqualFold(payloadType, "response.failed") &&
-		!openAICompatErrorEvent(eventName) && !hasTopLevelErrorFields {
-		return statusErr{}, false
-	}
 
-	status := 0
-	for _, path := range []string{"status", "status_code", "error.status", "error.status_code", "response.error.status", "response.error.status_code"} {
-		status = int(gjson.GetBytes(payload, path).Int())
-		if status >= http.StatusBadRequest && status <= 599 {
-			break
-		}
+	code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.code").String()))
+	if strings.Contains(code, "tpmratelimitexceeded") ||
+		(strings.Contains(lowerMessage, "tokens per minute") && strings.Contains(lowerMessage, "limit") && strings.Contains(lowerMessage, "exceeded")) {
+		delay := openAICompatTPMFallbackRetryAfter
+		return &delay
 	}
-	if status < http.StatusBadRequest || status > 599 {
-		status = http.StatusBadGateway
-	}
-	return statusErr{code: status, msg: string(payload)}, true
+	return nil
 }
-
-type statusErr struct {
-	code       int
-	msg        string
-	retryAfter *time.Duration
-}
-
-func (e statusErr) Error() string {
-	if e.msg != "" {
-		return e.msg
-	}
-	return fmt.Sprintf("status %d", e.code)
-}
-func (e statusErr) StatusCode() int            { return e.code }
-func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
