@@ -13,6 +13,8 @@ func init() {
 	registerRefreshLead("kimi", func() Authenticator { return NewKimiAuthenticator() })
 	registerRefreshLead("xai", func() Authenticator { return NewXAIAuthenticator() })
 	registerRefreshLead("opencode-go", func() Authenticator { return NewOpenCodeGoAuthenticator() })
+	registerRefreshLead("devin", func() Authenticator { return NewDevinAuthenticator() })
+	registerRefreshLead("meta", func() Authenticator { return NewMetaAuthenticator() })
 }
 
 func registerRefreshLead(provider string, factory func() Authenticator) {
