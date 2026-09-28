@@ -8,6 +8,7 @@ import (
 
 const (
 	claudeBuiltinFable51ModelID        = "claude-fable-5-1"
+	claudeFallbackSonnet55ModelID      = "claude-sonnet-5-5"
 	codexBuiltinImage15ModelID         = "gpt-image-1.5"
 	codexBuiltinImageModelID           = "gpt-image-2"
 	codexBuiltinImage25FlareModelID    = "gpt-image-2.5-flare"
@@ -244,9 +245,23 @@ func GetXAIModels() []*ModelInfo {
 }
 
 // WithClaudeBuiltins injects Claude model definitions that must remain available
-// while the remote catalog catches up. Built-ins replace matching remote entries.
+// while the remote catalog catches up. Built-ins replace matching remote entries;
+// fallbacks are only added while the remote catalog lacks them.
 func WithClaudeBuiltins(models []*ModelInfo) []*ModelInfo {
-	return upsertModelInfos(models, claudeBuiltinFable51ModelInfo())
+	models = upsertModelInfos(models, claudeBuiltinFable51ModelInfo())
+	if !containsModelID(models, claudeFallbackSonnet55ModelID) {
+		models = append(models, claudeFallbackSonnet55ModelInfo())
+	}
+	return models
+}
+
+func containsModelID(models []*ModelInfo, modelID string) bool {
+	for _, model := range models {
+		if model != nil && strings.EqualFold(strings.TrimSpace(model.ID), modelID) {
+			return true
+		}
+	}
+	return false
 }
 
 // WithCodexBuiltins injects hard-coded Codex-only model definitions that should
@@ -285,6 +300,32 @@ func claudeBuiltinFable51ModelInfo() *ModelInfo {
 		Type:                "claude",
 		DisplayName:         "Claude Fable 5.1",
 		Description:         "Anthropic's most capable generally available model for demanding reasoning and long-horizon agentic work",
+		ContextLength:       1000000,
+		MaxCompletionTokens: 128000,
+		SupportedInputModalities: []string{
+			"text",
+			"image",
+		},
+		SupportedOutputModalities: []string{"text"},
+		Thinking: &ThinkingSupport{
+			DynamicAllowed: true,
+			Levels:         []string{"low", "medium", "high", "xhigh", "max"},
+		},
+	}
+}
+
+// claudeFallbackSonnet55ModelInfo mirrors the pending router-for-me/models entry
+// for Claude Sonnet 5.5 (released 2026-09-28): one-million-token context, 128K
+// output, and adaptive thinking that the API does not allow to be disabled.
+func claudeFallbackSonnet55ModelInfo() *ModelInfo {
+	return &ModelInfo{
+		ID:                  claudeFallbackSonnet55ModelID,
+		Object:              "model",
+		Created:             1790553600, // 2026-09-28
+		OwnedBy:             "anthropic",
+		Type:                "claude",
+		DisplayName:         "Claude Sonnet 5.5",
+		Description:         "Anthropic's agentic Sonnet model for coding, tool use, and enterprise workflows",
 		ContextLength:       1000000,
 		MaxCompletionTokens: 128000,
 		SupportedInputModalities: []string{
@@ -590,6 +631,9 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 				return cloneModelInfo(m)
 			}
 		}
+	}
+	if modelID == claudeFallbackSonnet55ModelID {
+		return claudeFallbackSonnet55ModelInfo()
 	}
 
 	return nil

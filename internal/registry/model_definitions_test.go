@@ -165,6 +165,57 @@ func TestLookupStaticModelInfoFindsFable51Builtin(t *testing.T) {
 	}
 }
 
+func TestWithClaudeBuiltinsAddsSonnet55WhenRemoteCatalogLacksIt(t *testing.T) {
+	models := WithClaudeBuiltins([]*ModelInfo{{ID: "claude-sonnet-5"}})
+
+	var sonnet55 *ModelInfo
+	for _, model := range models {
+		if model != nil && model.ID == claudeFallbackSonnet55ModelID {
+			sonnet55 = model
+		}
+	}
+	if sonnet55 == nil {
+		t.Fatal("WithClaudeBuiltins() did not add the Sonnet 5.5 fallback")
+	}
+	if sonnet55.ContextLength != 1000000 || sonnet55.MaxCompletionTokens != 128000 {
+		t.Fatalf("Sonnet 5.5 limits = %d/%d, want 1000000/128000", sonnet55.ContextLength, sonnet55.MaxCompletionTokens)
+	}
+	if sonnet55.Thinking == nil || !sonnet55.Thinking.DynamicAllowed || sonnet55.Thinking.ZeroAllowed {
+		t.Fatalf("Thinking = %#v, want adaptive thinking that cannot be disabled", sonnet55.Thinking)
+	}
+}
+
+func TestWithClaudeBuiltinsKeepsRemoteSonnet55Metadata(t *testing.T) {
+	models := WithClaudeBuiltins([]*ModelInfo{{
+		ID:          claudeFallbackSonnet55ModelID,
+		DisplayName: "remote entry",
+	}})
+
+	matches := 0
+	for _, model := range models {
+		if model == nil || model.ID != claudeFallbackSonnet55ModelID {
+			continue
+		}
+		matches++
+		if model.DisplayName != "remote entry" {
+			t.Fatalf("DisplayName = %q, want the remote catalog entry", model.DisplayName)
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("Sonnet 5.5 matches = %d, want 1", matches)
+	}
+}
+
+func TestLookupStaticModelInfoFindsSonnet55Fallback(t *testing.T) {
+	model := LookupStaticModelInfo(claudeFallbackSonnet55ModelID)
+	if model == nil {
+		t.Fatal("LookupStaticModelInfo(Sonnet 5.5) = nil")
+	}
+	if model.DisplayName != "Claude Sonnet 5.5" {
+		t.Fatalf("DisplayName = %q, want Claude Sonnet 5.5", model.DisplayName)
+	}
+}
+
 func TestWithXAIBuiltinsIncludesVideo15GAAndPreviewAlias(t *testing.T) {
 	models := WithXAIBuiltins(nil)
 	foundGA := false
