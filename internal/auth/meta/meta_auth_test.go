@@ -13,6 +13,54 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 )
 
+func TestMetaTokenStoragePersistsSubsUsage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.json")
+	storage := &MetaTokenStorage{
+		Type:        "meta",
+		AccessToken: "LLM|key",
+		APIKey:      "LLM|key",
+		SubsUsage: &SubsUsage{
+			Window: SubsUsageWindow{WindowDurationMins: 300, UsedPercent: 12.5, ResetsAt: 2_000_000_000},
+			Weekly: SubsUsageWindow{UsedPercent: 34, ResetsAt: 2_000_604_800},
+		},
+	}
+	if err := storage.SaveTokenToFile(path); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]any
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	usage, ok := saved["subs_usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("subs_usage missing: %s", raw)
+	}
+	window := usage["window"].(map[string]any)
+	if window["used_percent"] != 12.5 || window["resets_at"] != float64(2_000_000_000) || window["window_duration_mins"] != float64(300) {
+		t.Fatalf("window = %#v", window)
+	}
+	weekly := usage["weekly"].(map[string]any)
+	if weekly["used_percent"] != float64(34) || weekly["resets_at"] != float64(2_000_604_800) {
+		t.Fatalf("weekly = %#v", weekly)
+	}
+}
+
+func TestCreateTokenStorageCarriesSubsUsage(t *testing.T) {
+	storage := NewMetaAuth(&config.Config{}).CreateTokenStorage(&MetaAuthBundle{
+		TokenData: &TokenData{AccessToken: "dca:test", TokenType: "Bearer"},
+		MintedKey: &MintedKeyResponse{APIKey: "LLM|key", SubsUsage: &SubsUsage{
+			Window: SubsUsageWindow{WindowDurationMins: 300, UsedPercent: 1, ResetsAt: 2_000_000_000},
+		}},
+	})
+	if storage == nil || storage.SubsUsage == nil || storage.SubsUsage.Window.UsedPercent != 1 {
+		t.Fatalf("storage = %#v", storage)
+	}
+}
+
 func TestMetaAuth_StartDeviceFlow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
