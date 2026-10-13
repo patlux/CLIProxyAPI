@@ -64,18 +64,33 @@ type TokenData struct {
 	ErrorDescription string `json:"error_description,omitempty"`
 }
 
+// SubsUsageWindow is one subscription quota window reported by the mint endpoint.
+type SubsUsageWindow struct {
+	WindowDurationMins int     `json:"window_duration_mins,omitempty"`
+	UsedPercent        float64 `json:"used_percent"`
+	ResetsAt           int64   `json:"resets_at"`
+}
+
+// SubsUsage reports subscription quota consumption as returned by the mint
+// endpoint alongside the minted key. It never contains credential material.
+type SubsUsage struct {
+	Window SubsUsageWindow `json:"window"`
+	Weekly SubsUsageWindow `json:"weekly"`
+}
+
 // MintedKeyResponse represents the API key response minted from https://api.meta.ai/muse-code/key.
 type MintedKeyResponse struct {
-	APIKey           string `json:"api_key"`
-	BaseURL          string `json:"base_url"`
-	UserEmail        string `json:"user_email"`
-	UserFullName     string `json:"user_full_name"`
-	SubsTierName     string `json:"subs_tier_name"`
-	SubsTierID       string `json:"subs_tier_id"`
-	IsSubsActive     bool   `json:"is_subs_active"`
-	HasPaymentMethod bool   `json:"has_payment_method"`
-	RequirePayment   bool   `json:"require_payment"`
-	CanSubscribe     bool   `json:"can_subscribe"`
+	APIKey           string     `json:"api_key"`
+	BaseURL          string     `json:"base_url"`
+	UserEmail        string     `json:"user_email"`
+	UserFullName     string     `json:"user_full_name"`
+	SubsTierName     string     `json:"subs_tier_name"`
+	SubsTierID       string     `json:"subs_tier_id"`
+	IsSubsActive     bool       `json:"is_subs_active"`
+	HasPaymentMethod bool       `json:"has_payment_method"`
+	RequirePayment   bool       `json:"require_payment"`
+	CanSubscribe     bool       `json:"can_subscribe"`
+	SubsUsage        *SubsUsage `json:"subs_usage,omitempty"`
 }
 
 // MetaAuthBundle packages the token data, minted key, and user metadata.
@@ -88,20 +103,21 @@ type MetaAuthBundle struct {
 
 // MetaTokenStorage represents persisted Meta OAuth tokens in auth files.
 type MetaTokenStorage struct {
-	Type         string `json:"type"`
-	AuthKind     string `json:"auth_kind"`
-	AccessToken  string `json:"access_token"`
-	DCAToken     string `json:"dca_token,omitempty"`
-	APIKey       string `json:"api_key,omitempty"`
-	TokenType    string `json:"token_type,omitempty"`
-	ExpiresIn    int    `json:"expires_in,omitempty"`
-	Expired      string `json:"expired,omitempty"`
-	DCAExpired   string `json:"dca_expired,omitempty"`
-	DCAExpiresAt int64  `json:"dca_expires_at,omitempty"`
-	LastRefresh  string `json:"last_refresh,omitempty"`
-	BaseURL      string `json:"base_url,omitempty"`
-	Email        string `json:"email,omitempty"`
-	Name         string `json:"name,omitempty"`
+	Type         string     `json:"type"`
+	AuthKind     string     `json:"auth_kind"`
+	AccessToken  string     `json:"access_token"`
+	DCAToken     string     `json:"dca_token,omitempty"`
+	APIKey       string     `json:"api_key,omitempty"`
+	TokenType    string     `json:"token_type,omitempty"`
+	ExpiresIn    int        `json:"expires_in,omitempty"`
+	Expired      string     `json:"expired,omitempty"`
+	DCAExpired   string     `json:"dca_expired,omitempty"`
+	DCAExpiresAt int64      `json:"dca_expires_at,omitempty"`
+	LastRefresh  string     `json:"last_refresh,omitempty"`
+	BaseURL      string     `json:"base_url,omitempty"`
+	Email        string     `json:"email,omitempty"`
+	Name         string     `json:"name,omitempty"`
+	SubsUsage    *SubsUsage `json:"subs_usage,omitempty"`
 
 	Metadata map[string]any `json:"-"`
 }
@@ -172,6 +188,9 @@ func (ts *MetaTokenStorage) SaveTokenToFile(authFilePath string) error {
 	}
 	if ts.Name != "" {
 		data["name"] = ts.Name
+	}
+	if ts.SubsUsage != nil {
+		data["subs_usage"] = ts.SubsUsage
 	}
 	// Managed saves supply the current metadata, including deliberate deletions.
 	// Only login callers without a metadata snapshot inherit settings from disk.
@@ -508,6 +527,11 @@ func (a *MetaAuth) CreateTokenStorage(bundle *MetaAuthBundle) *MetaTokenStorage 
 		}
 	}
 
+	var subsUsage *SubsUsage
+	if bundle.MintedKey != nil {
+		subsUsage = bundle.MintedKey.SubsUsage
+	}
+
 	accessToken := bundle.TokenData.AccessToken
 	expired := ""
 	if apiKey != "" {
@@ -534,6 +558,7 @@ func (a *MetaAuth) CreateTokenStorage(bundle *MetaAuthBundle) *MetaTokenStorage 
 		BaseURL:      baseURL,
 		Email:        email,
 		Name:         name,
+		SubsUsage:    subsUsage,
 	}
 }
 

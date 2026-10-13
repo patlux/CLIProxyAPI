@@ -29,6 +29,62 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestMetaExecutorRefreshCarriesSubsUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(metaauth.MintedKeyResponse{
+			APIKey: "LLM|replacement",
+			SubsUsage: &metaauth.SubsUsage{
+				Window: metaauth.SubsUsageWindow{WindowDurationMins: 300, UsedPercent: 12.5, ResetsAt: 2_000_000_000},
+				Weekly: metaauth.SubsUsageWindow{UsedPercent: 34, ResetsAt: 2_000_604_800},
+			},
+		})
+	}))
+	defer server.Close()
+	t.Setenv("META_MINT_URL", server.URL)
+	auth := &cliproxyauth.Auth{Provider: "meta", Metadata: map[string]any{"dca_token": "dca:test"}}
+	updated, err := NewMetaExecutor(nil).Refresh(context.Background(), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, ok := updated.Metadata["subs_usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata = %#v", updated.Metadata)
+	}
+	window := usage["window"].(map[string]any)
+	if window["used_percent"] != 12.5 || window["resets_at"] != int64(2_000_000_000) || window["window_duration_mins"] != 300 {
+		t.Fatalf("window = %#v", window)
+	}
+	weekly := usage["weekly"].(map[string]any)
+	if weekly["used_percent"] != float64(34) || weekly["resets_at"] != int64(2_000_604_800) {
+		t.Fatalf("weekly = %#v", weekly)
+	}
+	// File-loaded credentials persist through Metadata (asserted above); a
+	// login-created storage record carries the same snapshot typed.
+	withStorage := &cliproxyauth.Auth{
+		Provider: "meta",
+		Metadata: map[string]any{"dca_token": "dca:test"},
+		Storage:  &metaauth.MetaTokenStorage{Type: "meta", DCAToken: "dca:test"},
+	}
+	updatedStorage, err := NewMetaExecutor(nil).Refresh(context.Background(), withStorage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage, ok := updatedStorage.Storage.(*metaauth.MetaTokenStorage)
+	if !ok || storage.SubsUsage == nil || storage.SubsUsage.Weekly.UsedPercent != 34 {
+		t.Fatalf("storage = %#v", updatedStorage.Storage)
+	}
+	// The usage snapshot itself must never carry credential material. The
+	// full metadata map also holds the live credential by design, internal
+	// to the gateway; subs_usage is the only part the inventory exposes.
+	encoded, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "LLM|") || strings.Contains(string(encoded), "dca:") {
+		t.Fatalf("subs_usage leaks credential material: %s", encoded)
+	}
+}
+
 func TestMetaExecutor_Identifier(t *testing.T) {
 	exec := NewMetaExecutor(&config.Config{})
 	if exec.Identifier() != "meta" {

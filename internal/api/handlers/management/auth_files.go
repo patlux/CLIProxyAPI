@@ -703,6 +703,13 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quotaSupported .
 			entry["quota_probe"] = probe
 		}
 	}
+	// Expose the subscription usage snapshot captured at the last Meta mint.
+	// It carries percentages and reset timestamps only, never key material.
+	if strings.EqualFold(strings.TrimSpace(auth.Provider), "meta") && auth.Metadata != nil {
+		if usage, okUsage := auth.Metadata["subs_usage"]; okUsage && usage != nil {
+			entry["subs_usage"] = usage
+		}
+	}
 	if email := authEmail(auth); email != "" {
 		entry["email"] = email
 	}

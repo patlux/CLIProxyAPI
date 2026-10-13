@@ -856,6 +856,19 @@ func buildMetaAuthRecord(bundle *metaauth.MetaAuthBundle, tokenStorage *metaauth
 		metadata["subs_tier_id"] = bundle.MintedKey.SubsTierID
 		metadata["is_subs_active"] = bundle.MintedKey.IsSubsActive
 		metadata["has_payment_method"] = bundle.MintedKey.HasPaymentMethod
+		if bundle.MintedKey.SubsUsage != nil {
+			metadata["subs_usage"] = map[string]any{
+				"window": map[string]any{
+					"window_duration_mins": bundle.MintedKey.SubsUsage.Window.WindowDurationMins,
+					"used_percent":         bundle.MintedKey.SubsUsage.Window.UsedPercent,
+					"resets_at":            bundle.MintedKey.SubsUsage.Window.ResetsAt,
+				},
+				"weekly": map[string]any{
+					"used_percent": bundle.MintedKey.SubsUsage.Weekly.UsedPercent,
+					"resets_at":    bundle.MintedKey.SubsUsage.Weekly.ResetsAt,
+				},
+			}
+		}
 	}
 
 	attrs := map[string]string{

@@ -147,6 +147,21 @@ func (e *MetaExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*c
 	}
 	auth.Metadata["is_subs_active"] = minted.IsSubsActive
 	auth.Metadata["has_payment_method"] = minted.HasPaymentMethod
+	if minted.SubsUsage != nil {
+		auth.Metadata["subs_usage"] = map[string]any{
+			"window": map[string]any{
+				"window_duration_mins": minted.SubsUsage.Window.WindowDurationMins,
+				"used_percent":         minted.SubsUsage.Window.UsedPercent,
+				"resets_at":            minted.SubsUsage.Window.ResetsAt,
+			},
+			"weekly": map[string]any{
+				"used_percent": minted.SubsUsage.Weekly.UsedPercent,
+				"resets_at":    minted.SubsUsage.Weekly.ResetsAt,
+			},
+		}
+	} else {
+		delete(auth.Metadata, "subs_usage")
+	}
 	auth.Metadata["type"] = "meta"
 	nowStr := time.Now().Format(time.RFC3339)
 	auth.Metadata["last_refresh"] = nowStr
@@ -168,6 +183,7 @@ func (e *MetaExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*c
 		storage.Expired = ""
 		storage.BaseURL = baseURL
 		storage.LastRefresh = nowStr
+		storage.SubsUsage = minted.SubsUsage
 		storage.Metadata = auth.Metadata
 		if minted.UserEmail != "" {
 			storage.Email = minted.UserEmail
