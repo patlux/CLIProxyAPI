@@ -77,7 +77,7 @@ func TestAuthFileEntryMasksAPIKeyAccount(t *testing.T) {
 		},
 		CreatedAt: time.Now(),
 	}
-	entry := (&Handler{}).buildAuthFileEntry(auth)
+	entry := (&Handler{}).buildAuthFileEntry(auth, authFileQuotaContext{})
 	account, _ := entry["account"].(string)
 	if account == "super-secret-api-key" || !strings.Contains(account, "...") {
 		t.Fatalf("account = %q, want masked API key", account)
