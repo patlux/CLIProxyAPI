@@ -271,11 +271,11 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 				}
 				if len(ms) > 0 {
 					ms = s.appendPluginModels(providerKey, ms, nil)
-					published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(ms, a.Prefix, cfg.ForceModelPrefix))
+					published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyAuthModelPrefixes(ms, a, cfg.ForceModelPrefix))
 				} else {
 					ms = s.appendPluginModels(providerKey, nil, nil)
 					if len(ms) > 0 {
-						published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(ms, a.Prefix, cfg.ForceModelPrefix))
+						published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyAuthModelPrefixes(ms, a, cfg.ForceModelPrefix))
 					} else {
 						published = s.unregisterModelsForAuthFenced(a, fence)
 					}
@@ -294,11 +294,11 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 					ms := cached.models
 					if len(ms) > 0 {
 						ms = s.appendPluginModels(providerKey, ms, nil)
-						published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(ms, a.Prefix, cfg.ForceModelPrefix))
+						published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyAuthModelPrefixes(ms, a, cfg.ForceModelPrefix))
 					} else {
 						ms = s.appendPluginModels(providerKey, nil, nil)
 						if len(ms) > 0 {
-							published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(ms, a.Prefix, cfg.ForceModelPrefix))
+							published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyAuthModelPrefixes(ms, a, cfg.ForceModelPrefix))
 						} else {
 							published = s.unregisterModelsForAuthFenced(a, fence)
 						}
@@ -318,7 +318,7 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 			if isCompatAuth {
 				models = s.appendPluginModels(providerKey, nil, nil)
 				if len(models) > 0 {
-					published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(models, a.Prefix, cfg.ForceModelPrefix))
+					published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyAuthModelPrefixes(models, a, cfg.ForceModelPrefix))
 				} else {
 					// No matching provider found or models removed entirely; drop any prior registration.
 					published = s.unregisterModelsForAuthFenced(a, fence)
@@ -341,7 +341,7 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 	models = s.appendPluginModels(key, models, excluded)
 	if len(models) > 0 {
 		models = applyOAuthSettingsForAuth(cfg, provider, authKind, models)
-		published = s.registerResolvedModelsForAuthFenced(a, fence, key, applyModelPrefixes(models, a.Prefix, cfg != nil && cfg.ForceModelPrefix))
+		published = s.registerResolvedModelsForAuthFenced(a, fence, key, applyAuthModelPrefixes(models, a, cfg != nil && cfg.ForceModelPrefix))
 		if strings.EqualFold(strings.TrimSpace(a.Provider), "antigravity") {
 			s.asyncProbeAntigravityCapabilities(ctx, a, key)
 		}
@@ -710,6 +710,29 @@ func cloneModelInfoForCatalogRoute(model *ModelInfo) ModelInfo {
 		clone.NativeCapabilities = &capabilities
 	}
 	return clone
+}
+
+// Publish every namespace on the same registry client. This avoids duplicated
+// credentials, refreshes, quota state and selector weights for shared accounts.
+func applyAuthModelPrefixes(models []*ModelInfo, auth *coreauth.Auth, forceModelPrefix bool) []*ModelInfo {
+	if auth == nil {
+		return models
+	}
+	prefixes := auth.ModelPrefixes()
+	if len(prefixes) == 1 {
+		return applyModelPrefixes(models, prefixes[0], forceModelPrefix)
+	}
+	var out []*ModelInfo
+	seen := make(map[string]bool)
+	for _, prefix := range prefixes {
+		for _, model := range applyModelPrefixes(models, prefix, forceModelPrefix) {
+			if model != nil && !seen[model.ID] {
+				seen[model.ID] = true
+				out = append(out, model)
+			}
+		}
+	}
+	return out
 }
 
 func applyModelPrefixes(models []*ModelInfo, prefix string, forceModelPrefix bool) []*ModelInfo {

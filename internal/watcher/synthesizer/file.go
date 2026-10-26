@@ -167,6 +167,7 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 						setter.SetMetadata(auth.Metadata)
 					}
 				}
+				coreauth.ApplyAdditionalPrefixesMetadata(auth, metadata)
 				coreauth.SetOAuthModelAliasesAttribute(auth, perAccountModelAliases)
 				applyVertexOpenAPISettingsAttribute(auth, metadata)
 				ApplyAuthExcludedModelsMeta(auth, perAccountExcluded, "oauth")
@@ -250,6 +251,7 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 		}
 	}
 	coreauth.ApplyCustomHeadersFromMetadata(a)
+	coreauth.ApplyAdditionalPrefixesMetadata(a, metadata)
 	coreauth.SetOAuthModelAliasesAttribute(a, perAccountModelAliases)
 	applyOpenAPIModelsAttribute(a, metadata)
 	applyVertexOpenAPISettingsAttribute(a, metadata)

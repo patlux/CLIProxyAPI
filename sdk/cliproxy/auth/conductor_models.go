@@ -701,15 +701,12 @@ func rewriteModelForAuth(model string, auth *Auth) string {
 	if auth == nil || model == "" {
 		return model
 	}
-	prefix := strings.TrimSpace(auth.Prefix)
-	if prefix == "" {
-		return model
+	for _, prefix := range auth.ModelPrefixes() {
+		if prefix != "" && strings.HasPrefix(model, prefix+"/") {
+			return strings.TrimPrefix(model, prefix+"/")
+		}
 	}
-	needle := prefix + "/"
-	if !strings.HasPrefix(model, needle) {
-		return model
-	}
-	return strings.TrimPrefix(model, needle)
+	return model
 }
 
 func (m *Manager) applyAPIKeyModelAlias(auth *Auth, requestedModel string) string {

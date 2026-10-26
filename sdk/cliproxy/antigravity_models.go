@@ -675,7 +675,7 @@ func (s *Service) antigravityModelsForHintsWithConfig(auth *coreauth.Auth, hints
 	models = applyOAuthModelAliasForAuth(cfg, "antigravity", auth.AuthKind(), auth.Attributes, models)
 	models = s.appendPluginModels("antigravity", models, excluded)
 	models = applyOAuthSettingsForAuth(cfg, "antigravity", auth.AuthKind(), models)
-	return applyModelPrefixes(models, auth.Prefix, cfg.ForceModelPrefix)
+	return applyAuthModelPrefixes(models, auth, cfg.ForceModelPrefix)
 }
 
 func (s *Service) asyncProbeAntigravityCapabilities(ctx context.Context, auth *coreauth.Auth, providerKey string) {
@@ -739,8 +739,11 @@ func (s *Service) applyAntigravityModelHints(ctx context.Context, auth *coreauth
 		// Older capability-only responses cannot revoke model entitlements.
 		aliasMap := s.buildAntigravityReverseAliasMap(auth)
 		updated = GlobalModelRegistry().ApplyClientModelCapabilities(auth.ID, expectedRegEpoch, func(id string, info *ModelInfo) {
-			if _, ok := hints.WebSearchModelIDs[resolveAntigravityUpstreamModelID(id, auth.Prefix, aliasMap)]; ok {
-				info.SupportsWebSearch = true
+			for _, prefix := range auth.ModelPrefixes() {
+				if _, ok := hints.WebSearchModelIDs[resolveAntigravityUpstreamModelID(id, prefix, aliasMap)]; ok {
+					info.SupportsWebSearch = true
+					break
+				}
 			}
 		})
 	}

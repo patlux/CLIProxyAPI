@@ -12,6 +12,29 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
+func TestFileTokenStoreAdditionalPrefixesRoundTrip(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "shared.json")
+	if err := os.WriteFile(path, []byte(`{"type":"claude","prefix":"work","additional_prefixes":["general"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewFileTokenStore()
+	store.SetBaseDir(directory)
+	for range 2 {
+		auths, err := store.List(context.Background())
+		if err != nil || len(auths) != 1 {
+			t.Fatalf("List = %d auths, %v", len(auths), err)
+		}
+		prefixes := auths[0].ModelPrefixes()
+		if len(prefixes) != 2 || prefixes[0] != "work" || prefixes[1] != "general" {
+			t.Fatalf("prefixes = %v", prefixes)
+		}
+		if _, err := store.Save(context.Background(), auths[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestExtractAccessToken(t *testing.T) {
 	t.Parallel()
 
