@@ -36,6 +36,38 @@ func TestSyncAuthFilePriorityAttributeTracksFileSource(t *testing.T) {
 	}
 }
 
+// The limits UI clears a manual routing priority with an explicit null.
+func TestPatchAuthFileFieldsNullPriorityClearsRoutingPriority(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	manager := coreauth.NewManager(&memoryAuthStore{}, nil, nil)
+	record := &coreauth.Auth{
+		ID: "claude.json", FileName: "claude.json", Provider: "claude",
+		Attributes: map[string]string{"priority": "65", coreauth.AttributeFilePriority: "true", coreauth.AttributeSourceBackend: coreauth.AuthSourceFile},
+		Metadata:   map[string]any{"type": "claude", "priority": float64(65)},
+	}
+	if _, errRegister := manager.Register(context.Background(), record); errRegister != nil {
+		t.Fatal(errRegister)
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, manager)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPatch, "/v0/management/auth-files/fields", strings.NewReader(`{"name":"claude.json","priority":null}`))
+	h.PatchAuthFileFields(ctx)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	updated, _ := manager.GetByID("claude.json")
+	if _, ok := updated.Attributes["priority"]; ok {
+		t.Fatalf("routing priority still set: %#v", updated.Attributes)
+	}
+	if _, ok := updated.Attributes[coreauth.AttributeFilePriority]; ok {
+		t.Fatal("cleared priority still marked as file priority")
+	}
+	if value, ok := authFileIntValue(updated.Metadata["priority"]); ok {
+		t.Fatalf("metadata priority = %d, want no numeric priority", value)
+	}
+}
+
 func TestPatchAuthFileFields_MergeHeadersAndDeleteEmptyValues(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 
