@@ -475,6 +475,7 @@ func TestApplyCodexClientModelMetadataPreservesMultiAgentVersionWhenDisabled(t *
 }
 
 func TestCodexClientModelsResponseAppliesMaxContextLengthOverride(t *testing.T) {
+	useLegacyCodexClientCatalog(t)
 	const wantOverride = 1048576
 	const wantDefault = 272000
 
@@ -907,6 +908,7 @@ func TestCodexClientModelsResponse_ExplicitRouteOverridesHonored(t *testing.T) {
 }
 
 func TestCodexClientModelsResponse_UnrelatedCustomProviderRetainsFallback(t *testing.T) {
+	useLegacyCodexClientCatalog(t)
 	modelRegistry := registry.GetGlobalRegistry()
 	clientID := "codex-unrelated-custom-provider-test-client"
 	modelRegistry.RegisterClient(clientID, "openai-compatibility", []*registry.ModelInfo{
@@ -1555,6 +1557,7 @@ func assertCPAWebSearchCapability(t *testing.T, model map[string]any, want bool,
 }
 
 func TestCodexClientModelsResponse_DevinDisplayName(t *testing.T) {
+	useLegacyCodexClientCatalog(t)
 	availableModels := []map[string]any{
 		// 1. Template Devin model with explicit display_name
 		{

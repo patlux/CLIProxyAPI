@@ -11,7 +11,8 @@ import (
 )
 
 func TestCodexClientModelsResponseMultiAgentV2FollowsConfig(t *testing.T) {
-	modelID := "codex-client-multi-agent-v2-test"
+	// Use a template with native v1 so the v2 override remains observable.
+	modelID := "gpt-5.6-luna"
 	clientID := "codex-client-multi-agent-v2-test-client"
 	modelRegistry := registry.GetGlobalRegistry()
 	modelRegistry.RegisterClient(clientID, "openai-compatibility", []*registry.ModelInfo{{ID: modelID}})
@@ -53,8 +54,8 @@ func TestCodexClientModelsResponseMultiAgentV2FollowsConfig(t *testing.T) {
 				}
 				return
 			}
-			if !exists || value != nil {
-				t.Fatalf("multi_agent_version = %#v, want preserved null", value)
+			if !exists || value != "v1" {
+				t.Fatalf("multi_agent_version = %#v, want preserved v1", value)
 			}
 		})
 	}

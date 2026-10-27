@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/antigravity"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/opencodego"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -40,15 +41,16 @@ type diskAuthFileCandidate struct {
 }
 
 var (
-	callbackForwardersMu      sync.Mutex
-	callbackForwarders        = make(map[int]*callbackForwarder)
-	authFileEntryMu           sync.Mutex
-	errAuthFileMustBeJSON     = errors.New("auth file must be .json")
-	errInvalidAuthFile        = errors.New("invalid auth file")
-	errAuthFileNotFound       = errors.New("auth file not found")
-	errPluginVirtualAuth      = errors.New("plugin virtual auth cannot be modified directly; edit or delete the source auth file")
-	newCodexOAuthService      = func(cfg *config.Config) codexOAuthService { return codex.NewCodexAuth(cfg) }
-	newOpenCodeGoOAuthService = func(cfg *config.Config) openCodeGoOAuthService {
+	callbackForwardersMu       sync.Mutex
+	callbackForwarders         = make(map[int]*callbackForwarder)
+	authFileEntryMu            sync.Mutex
+	errAuthFileMustBeJSON      = errors.New("auth file must be .json")
+	errInvalidAuthFile         = errors.New("invalid auth file")
+	errAuthFileNotFound        = errors.New("auth file not found")
+	errPluginVirtualAuth       = errors.New("plugin virtual auth cannot be modified directly; edit or delete the source auth file")
+	newCodexOAuthService       = func(cfg *config.Config) codexOAuthService { return codex.NewCodexAuth(cfg) }
+	newAntigravityOAuthService = func(cfg *config.Config) antigravityOAuthService { return antigravity.NewAntigravityAuth(cfg, nil) }
+	newOpenCodeGoOAuthService  = func(cfg *config.Config) openCodeGoOAuthService {
 		return opencodego.NewService(cfg, "")
 	}
 )

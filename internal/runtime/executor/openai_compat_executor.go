@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -1159,8 +1160,6 @@ func (e *OpenAICompatExecutor) overrideModel(payload []byte, model string) []byt
 
 var openAICompatRetryDurationPattern = regexp.MustCompile(`(?i)([0-9]+)\s*(ms|s|m|h|d)`)
 
-const openAICompatTPMFallbackRetryAfter = time.Minute
-
 func openAICompatErrorEvent(eventName string) bool {
 	return strings.EqualFold(eventName, "error") || strings.EqualFold(eventName, "response.error") || strings.EqualFold(eventName, "response.failed")
 }
@@ -1207,10 +1206,14 @@ func openAICompatStreamDataError(payload []byte, eventName string) (statusErr, b
 }
 
 type statusErr struct {
-	code             int
-	msg              string
-	retryAfter       *time.Duration
-	credentialScoped bool
+	code               int
+	msg                string
+	retryAfter         *time.Duration
+	credentialScoped   bool
+	streamTruncated    bool
+	transientRateLimit bool
+	// diagnostic is a content-free detail for logs only; it never reaches clients.
+	diagnostic string
 }
 
 func (e statusErr) Error() string {
@@ -1223,6 +1226,19 @@ func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 func (e statusErr) IsCredentialScoped() bool   { return e.credentialScoped }
 
+// LogDiagnostic lets upstream failure logs explain a sanitized client message.
+func (e statusErr) LogDiagnostic() string { return e.diagnostic }
+
+// IsStreamTruncated marks a locally synthesized failure for an accepted
+// upstream stream that ended without its terminal frame.
+func (e statusErr) IsStreamTruncated() bool { return e.streamTruncated }
+
+// IsTransientRateLimit marks a transient per-model capacity/admission 429
+// that must not be recorded as credential quota exhaustion.
+func (e statusErr) IsTransientRateLimit() bool { return e.transientRateLimit }
+
+const openAICompatTPMFallbackRetryAfter = time.Minute
+
 func newOpenAICompatStatusError(status int, headers http.Header, body []byte) statusErr {
 	return statusErr{
 		code:       status,
@@ -1231,24 +1247,49 @@ func newOpenAICompatStatusError(status int, headers http.Header, body []byte) st
 	}
 }
 
-// openAICompatRetryAfter preserves explicit provider retry signals. For 429s
-// without a deadline it also applies a one-minute TPM fallback so large
-// requests are not immediately replayed.
+// parseRetryAfterHeader parses an HTTP Retry-After header in either the
+// delay-seconds or HTTP-date form. A present, valid value always yields a
+// non-nil result so that an explicit immediate retry (0 seconds or a past
+// date) stays distinguishable from an absent hint; missing or malformed
+// values yield nil and let body-derived hints apply.
+func parseRetryAfterHeader(headers http.Header, now time.Time) *time.Duration {
+	if headers == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(headers.Get("Retry-After"))
+	if raw == "" {
+		return nil
+	}
+	if seconds, errParse := strconv.ParseInt(raw, 10, 64); errParse == nil && seconds >= 0 {
+		if seconds > int64(math.MaxInt64)/int64(time.Second) {
+			// Out of representable range: clamp to the largest duration so
+			// far-future deadlines only ever over-report recovery.
+			delay := time.Duration(math.MaxInt64)
+			return &delay
+		}
+		delay := time.Duration(seconds) * time.Second
+		return &delay
+	}
+	if deadline, errParse := http.ParseTime(raw); errParse == nil {
+		delay := deadline.Sub(now)
+		if delay < 0 {
+			delay = 0
+		}
+		return &delay
+	}
+	return nil
+}
+
+// openAICompatRetryAfter preserves explicit header and body retry hints.
+// Explicit TPM limits without a hint use the bounded one-minute fallback.
 func openAICompatRetryAfter(status int, headers http.Header, body []byte, now time.Time) *time.Duration {
 	if status != http.StatusTooManyRequests {
 		return nil
 	}
+	if retryAfter := parseRetryAfterHeader(headers, now); retryAfter != nil {
+		return retryAfter
+	}
 	if headers != nil {
-		if raw := strings.TrimSpace(headers.Get("Retry-After")); raw != "" {
-			if seconds, errParse := strconv.ParseInt(raw, 10, 64); errParse == nil && seconds >= 0 {
-				duration := time.Duration(seconds) * time.Second
-				return &duration
-			}
-			if deadline, errParse := http.ParseTime(raw); errParse == nil {
-				duration := max(deadline.Sub(now), time.Duration(0))
-				return &duration
-			}
-		}
 		for _, header := range []string{"X-RateLimit-Reset", "RateLimit-Reset"} {
 			raw := strings.TrimSpace(headers.Get(header))
 			if raw == "" {
