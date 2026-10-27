@@ -164,6 +164,102 @@ func TestSharedPrefixRouting(t *testing.T) {
 	}
 }
 
+// A negative file priority keeps a shared credential as a reserve in the general
+// namespace: an earlier reset does not rank it ahead of tier-0 credentials, it
+// takes over only when they are unavailable, and its dedicated namespace still
+// routes to it as the only candidate.
+func TestSharedPrefixReservePriority(t *testing.T) {
+	ctx := coreauth.WithSkipPersist(context.Background())
+	selector := coreauth.NewSessionAffinitySelector(&coreauth.SoonestResetFirstSelector{})
+	t.Cleanup(selector.Stop)
+	manager := coreauth.NewManager(nil, selector, nil)
+	manager.RegisterExecutor(sharedPrefixExecutor{})
+	cfg := &config.Config{SDKConfig: config.SDKConfig{ForceModelPrefix: true}}
+	manager.SetConfig(cfg)
+	service := &Service{cfg: cfg, coreManager: manager}
+	reg := GlobalModelRegistry()
+	directory := t.TempDir()
+
+	register := func(id, prefix string, additional []string, priority *int) *coreauth.Auth {
+		t.Helper()
+		fields := map[string]any{
+			"type": "claude", "prefix": prefix, "additional_prefixes": additional,
+			"email": id + "@example.invalid",
+		}
+		if priority != nil {
+			fields["priority"] = *priority
+		}
+		data, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		auths, err := synthesizer.SynthesizeAuthFile(&synthesizer.SynthesisContext{
+			AuthDir: directory, Config: cfg, Now: time.Now(),
+		}, filepath.Join(directory, id), data)
+		if err != nil || len(auths) != 1 {
+			t.Fatalf("synthesize = %d auths, %v; want one identity", len(auths), err)
+		}
+		auth, err := manager.Register(ctx, auths[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { reg.UnregisterClient(auth.ID) })
+		if !service.registerModelsForAuth(ctx, auth) {
+			t.Fatal("catalog publication rejected")
+		}
+		return auth
+	}
+
+	reserve := -1
+	shared := register("reserve-shared-test.json", "work", []string{"general"}, &reserve)
+	ordinary := register("reserve-ordinary-test.json", "general", nil, nil)
+	const model = "claude-opus-5-5"
+
+	now := time.Now()
+	if _, err := manager.MergeQuotaResetHints(map[string]coreauth.QuotaResetHint{
+		shared.ID:   {ObservedAt: now, ResetAt: now.Add(time.Hour)},
+		ordinary.ID: {ObservedAt: now, ResetAt: now.Add(24 * time.Hour)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	execute := func(route, session string, want *coreauth.Auth) {
+		t.Helper()
+		response, err := manager.Execute(ctx, []string{"claude"}, executor.Request{Model: route + "/" + model}, executor.Options{
+			Metadata: map[string]any{executor.DerivedSessionIDMetadataKey: session},
+		})
+		if err != nil || string(response.Payload) != want.ID+":"+model {
+			t.Fatalf("execute %s/%s = %s, %v; want %s", route, session, response.Payload, err, want.ID)
+		}
+	}
+
+	execute("general", "general-new", ordinary)
+	execute("work", "work-new", shared)
+
+	var ranks map[string]int
+	for _, view := range manager.QuotaRoutingSnapshot().Providers["claude"] {
+		if ranks == nil {
+			ranks = make(map[string]int)
+		}
+		ranks[view.AuthIndex] = view.Rank
+		if view.AuthIndex == shared.Index && view.Priority != reserve {
+			t.Fatalf("routing status priority = %d, want %d", view.Priority, reserve)
+		}
+	}
+	if ranks[ordinary.Index] != 1 || ranks[shared.Index] != 2 {
+		t.Fatalf("routing ranks = %v, want ordinary first and the reserve second", ranks)
+	}
+
+	// The reserve takes over general requests only while tier 0 is unavailable.
+	retryAfter := time.Hour
+	manager.MarkResult(ctx, coreauth.Result{
+		AuthID: ordinary.ID, Provider: "claude", Model: model, Success: false,
+		Error:      &coreauth.Error{HTTPStatus: http.StatusTooManyRequests, Message: "synthetic quota"},
+		RetryAfter: &retryAfter,
+	})
+	execute("general", "general-while-limited", shared)
+	execute("work", "work-while-limited", shared)
+}
+
 type sharedPrefixExecutor struct{}
 
 func (sharedPrefixExecutor) Identifier() string { return "claude" }
