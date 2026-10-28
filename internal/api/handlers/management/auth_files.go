@@ -793,6 +793,13 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quota authFileQu
 			}
 		}
 	}
+	if quota.v8 {
+		entry["five_hour_limit_editable"] = !runtimeOnly && entry["source"] == "file" && !coreauth.IsPluginVirtualAuth(auth) &&
+			(auth.Provider == "claude" || auth.Provider == "codex" || auth.Provider == "kimi")
+		if limit, ok := fiveHourLimit(auth.Metadata); ok {
+			entry[fiveHourLimitField] = limit
+		}
+	}
 	if weight, ok := authWeightValue(auth); ok {
 		entry[coreauth.AttributeWeight] = weight
 	}
