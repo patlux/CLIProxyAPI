@@ -29,6 +29,7 @@ type metaPreparedRequest struct {
 	to              sdktranslator.Format
 	originalPayload []byte
 	body            []byte
+	toolAliases     helps.MetaToolNameAliases
 }
 
 func (e *MetaExecutor) prepareResponsesRequest(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, stream bool) (*metaPreparedRequest, error) {
@@ -77,6 +78,10 @@ func (e *MetaExecutor) prepareResponsesRequest(ctx context.Context, auth *clipro
 	body = sanitizeOpenAIResponsesReasoningEncryptedContentForMetaBaseURL(ctx, "meta executor", body, baseURL)
 	body = helps.SanitizeMetaWebSearchTools(body)
 	body = helps.NormalizeCodexToolIntegerTypes(body, opts.Headers)
+	// Meta rejects function tool names that collide with the Muse Code builtin
+	// set. Alias them after all translation and normalization, and restore the
+	// client names in the response before it is translated back.
+	body, toolAliases := helps.AliasMetaToolNames(body)
 
 	body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, e.Identifier(), from.String(), "", body, originalTranslated, requestedModel, requestPath, opts.Headers)
 	return &metaPreparedRequest{
@@ -87,6 +92,7 @@ func (e *MetaExecutor) prepareResponsesRequest(ctx context.Context, auth *clipro
 		to:              to,
 		originalPayload: originalPayload,
 		body:            body,
+		toolAliases:     toolAliases,
 	}, nil
 }
 
@@ -226,6 +232,7 @@ func (e *MetaExecutor) translateMetaCompleted(ctx context.Context, req cliproxye
 			return metaCompletedTranslation{}, errBridge
 		}
 		for _, eventData := range events {
+			eventData = helps.RestoreMetaToolNames(eventData, prepared.toolAliases)
 			eventType := gjson.GetBytes(eventData, "type").String()
 			switch eventType {
 			case "response.output_item.done":
@@ -253,6 +260,7 @@ func (e *MetaExecutor) translateMetaCompleted(ctx context.Context, req cliproxye
 			errBridge = statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage}
 			return metaCompletedTranslation{}, errBridge
 		}
+		completedData = helps.RestoreMetaToolNames(completedData, prepared.toolAliases)
 		var param any
 		out := sdktranslator.TranslateNonStream(ctx, prepared.to, prepared.responseFormat, req.Model, prepared.originalPayload, prepared.body, completedData, &param)
 		if helps.ApplyPatchTranslationError(param) != nil || len(out) == 0 {

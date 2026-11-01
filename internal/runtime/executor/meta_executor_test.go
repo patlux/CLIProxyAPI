@@ -20,6 +20,7 @@ import (
 	metaauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/meta"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/translator"
 	sdkauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -1593,13 +1594,13 @@ func TestMetaExecutor_NormalizesToolFieldsForCodexUserAgent(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		"exec_command":   {"yield_time_ms", "max_output_tokens", "timeout_ms"},
-		"write_stdin":    {"session_id", "yield_time_ms", "max_output_tokens"},
-		"sleep":          {"duration_ms"},
-		"wait_agent":     {"timeout_ms"},
-		"wait":           {"yield_time_ms", "max_tokens"},
-		"tool_search":    {"limit"},
-		"test_sync_tool": {"sleep_before_ms", "sleep_after_ms", "participants", "timeout_ms"},
+		"exec_command":                         {"yield_time_ms", "max_output_tokens", "timeout_ms"},
+		"write_stdin":                          {"session_id", "yield_time_ms", "max_output_tokens"},
+		"sleep":                                {"duration_ms"},
+		"wait_agent":                           {"timeout_ms"},
+		"wait":                                 {"yield_time_ms", "max_tokens"},
+		helps.MetaToolAliasName("tool_search"): {"limit"},
+		"test_sync_tool":                       {"sleep_before_ms", "sleep_after_ms", "participants", "timeout_ms"},
 	}
 
 	for toolName, fields := range expected {

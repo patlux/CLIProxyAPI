@@ -179,6 +179,7 @@ func (e *MetaExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 				continue
 			}
 			eventData := bytes.TrimSpace(trimmedLine[len(dataTag):])
+			eventData = helps.RestoreMetaToolNames(eventData, prepared.toolAliases)
 			eventType := gjson.GetBytes(eventData, "type").String()
 			if isMetaSubscriptionUsageEvent(eventType, eventData) {
 				pendingEventLine = nil
