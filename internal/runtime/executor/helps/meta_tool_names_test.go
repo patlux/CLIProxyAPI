@@ -13,6 +13,9 @@ func TestAliasMetaToolNames_RenamesMuseBuiltinCollisions(t *testing.T) {
 			{"type": "function", "name": "read", "parameters": {"type": "object"}},
 			{"type": "function", "name": "bash", "parameters": {"type": "object"}},
 			{"type": "function", "name": "web_search", "parameters": {"type": "object"}},
+			{"type": "function", "name": "web_fetch", "parameters": {"type": "object"}},
+			{"type": "function", "name": "create_goal", "parameters": {"type": "object"}},
+			{"type": "function", "name": "workflow", "parameters": {"type": "object"}},
 			{"type": "namespace", "name": "group", "tools": [
 				{"type": "function", "name": "read_file", "parameters": {"type": "object"}}
 			]},
@@ -40,10 +43,19 @@ func TestAliasMetaToolNames_RenamesMuseBuiltinCollisions(t *testing.T) {
 	if got := gjson.GetBytes(out, "tools.2.name").String(); got != MetaToolAliasName("web_search") {
 		t.Fatalf("web_search alias = %q", got)
 	}
-	if got := gjson.GetBytes(out, "tools.3.tools.0.name").String(); got != MetaToolAliasName("read_file") {
+	if got := gjson.GetBytes(out, "tools.3.name").String(); got != MetaToolAliasName("web_fetch") {
+		t.Fatalf("web_fetch alias = %q", got)
+	}
+	if got := gjson.GetBytes(out, "tools.4.name").String(); got != MetaToolAliasName("create_goal") {
+		t.Fatalf("create_goal alias = %q", got)
+	}
+	if got := gjson.GetBytes(out, "tools.5.name").String(); got != MetaToolAliasName("workflow") {
+		t.Fatalf("workflow alias = %q", got)
+	}
+	if got := gjson.GetBytes(out, "tools.6.tools.0.name").String(); got != MetaToolAliasName("read_file") {
 		t.Fatalf("nested read_file alias = %q", got)
 	}
-	if got := gjson.GetBytes(out, "tools.4.name").String(); got != "" {
+	if got := gjson.GetBytes(out, "tools.7.name").String(); got != "" {
 		t.Fatalf("server web_search tool gained a name: %q", got)
 	}
 	if got := gjson.GetBytes(out, "tool_choice.name").String(); got != bashAlias {
@@ -57,10 +69,13 @@ func TestAliasMetaToolNames_RenamesMuseBuiltinCollisions(t *testing.T) {
 	}
 
 	want := map[string]string{
-		bashAlias:                       "bash",
-		MetaToolAliasName("web_search"): "web_search",
-		MetaToolAliasName("read_file"):  "read_file",
-		MetaToolAliasName("edit_file"):  "edit_file",
+		bashAlias:                        "bash",
+		MetaToolAliasName("web_search"):  "web_search",
+		MetaToolAliasName("web_fetch"):   "web_fetch",
+		MetaToolAliasName("create_goal"): "create_goal",
+		MetaToolAliasName("workflow"):    "workflow",
+		MetaToolAliasName("read_file"):   "read_file",
+		MetaToolAliasName("edit_file"):   "edit_file",
 	}
 	if len(aliases) != len(want) {
 		t.Fatalf("aliases = %#v, want %d entries", aliases, len(want))

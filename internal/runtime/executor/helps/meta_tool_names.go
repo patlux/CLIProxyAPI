@@ -17,18 +17,52 @@ import (
 // Muse Code client only."), even though the identical request without the
 // colliding name succeeds. The check is case-sensitive: "Bash" passes.
 //
+// The list was probed against api.meta.ai on 2026-11-01 with the subscription
+// credential. It covers the Muse Code builtin registry (read/write tools,
+// memory, peer sessions, work items, goals, subagents, cron, shell, web) and
+// the agent-framework names Meta also reserves (workflow, apply_patch,
+// write_todos, request_user_input, update_plan). "artifact" and "tool_search"
+// are accepted and deliberately not rewritten.
+//
 // The gateway emulates the Muse Code client through its user agent and client
 // id, but it cannot claim the builtin tool declarations, so colliding client
 // tool names are aliased on the way upstream and restored on the way back.
 var metaMuseBuiltinToolNames = map[string]struct{}{
 	"read_file":             {},
+	"search":                {},
 	"write_file":            {},
 	"edit_file":             {},
-	"bash":                  {},
+	"read_memory":           {},
+	"add_memory":            {},
+	"edit_memory":           {},
+	"list_peer_sessions":    {},
+	"send_session_message":  {},
+	"work_stop":             {},
+	"work_list":             {},
+	"web_fetch":             {},
 	"web_search":            {},
-	"tool_search":           {},
+	"shell":                 {},
+	"bash":                  {},
+	"bash_input":            {},
+	"monitor":               {},
+	"cron_create":           {},
+	"cron_delete":           {},
+	"cron_list":             {},
+	"get_goal":              {},
+	"create_goal":           {},
+	"update_goal":           {},
+	"report_progress":       {},
+	"subagent_spawn":        {},
+	"subagent_status":       {},
 	"subagent_send_message": {},
+	"subagent_wait":         {},
+	"subagent_read_result":  {},
 	"subagent_cancel":       {},
+	"workflow":              {},
+	"apply_patch":           {},
+	"write_todos":           {},
+	"request_user_input":    {},
+	"update_plan":           {},
 }
 
 // metaToolAliasPrefix keeps aliases recognizable in upstream logs and outside
