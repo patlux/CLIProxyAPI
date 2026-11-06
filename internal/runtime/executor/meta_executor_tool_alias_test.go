@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func metaToolAliasTestAuth(serverURL string) *cliproxyauth.Auth {
@@ -96,16 +96,24 @@ func TestMetaExecutor_AliasesMuseBuiltinToolNames(t *testing.T) {
 		t.Fatalf("Execute() error = %v", errExec)
 	}
 
-	if got := gjson.GetBytes(gotBody, "tools.0.name").String(); got != bashAlias {
+	if got := ojson.GetBytes(gotBody, "tools.0.name").String(); got != bashAlias {
 		t.Fatalf("upstream bash tool name = %q, want alias %q", got, bashAlias)
 	}
-	if got := gjson.GetBytes(gotBody, "tools.1.name").String(); got != "read" {
+	if got := ojson.GetBytes(gotBody, "tools.1.name").String(); got != "read" {
 		t.Fatalf("upstream non-colliding tool name = %q, want read", got)
 	}
-	if got := gjson.GetBytes(gotBody, "input.1.name").String(); got != bashAlias {
+	if got := ojson.GetBytes(gotBody, "input.1.name").String(); got != bashAlias {
 		t.Fatalf("upstream history name = %q, want alias %q", got, bashAlias)
 	}
-	if got := gjson.GetBytes(resp.Payload, "output.#(type==\"function_call\").name").String(); got != "bash" {
+	// Upstream appends the canonical Muse namespace so subscription-key requests
+	// pass attestation; aliasing must not replace it.
+	if got := ojson.GetBytes(gotBody, "tools.2.type").String(); got != "namespace" {
+		t.Fatalf("upstream Muse namespace missing after aliasing: %s", gotBody)
+	}
+	if got := ojson.GetBytes(gotBody, "tools.2.name").String(); got != "muse" {
+		t.Fatalf("upstream namespace name = %q, want muse", got)
+	}
+	if got := ojson.GetBytes(resp.Payload, "output.#(type==\"function_call\").name").String(); got != "bash" {
 		t.Fatalf("client function call name = %q, want bash; payload=%s", got, resp.Payload)
 	}
 }

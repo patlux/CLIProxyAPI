@@ -8,11 +8,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 // Candidate names are transport probes, not declarations of upstream support.
@@ -65,11 +65,11 @@ func TestCodexExecutorImageModelPassthrough(t *testing.T) {
 					}
 					body := <-bodies
 					for path, want := range map[string]string{"tools.0.type": "image_generation", "tools.0.model": model, "tools.0.quality": "low", "tools.0.size": "1024x1024", "tool_choice.type": "image_generation"} {
-						if got := gjson.GetBytes(body, path).String(); got != want {
+						if got := ojson.GetBytes(body, path).String(); got != want {
 							t.Errorf("%s = %q, want %q", path, got, want)
 						}
 					}
-					if got := len(gjson.GetBytes(body, "tools").Array()); got != 1 {
+					if got := len(ojson.GetBytes(body, "tools").Array()); got != 1 {
 						t.Errorf("tool count = %d, want 1", got)
 					}
 				})

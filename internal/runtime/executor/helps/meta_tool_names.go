@@ -5,8 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // metaMuseBuiltinToolNames are the function tool names reserved by Meta's Muse
@@ -77,7 +76,7 @@ type MetaToolNameAliases map[string]string
 
 // MetaToolAliasName returns the deterministic upstream alias for a client tool
 // name. Callers that need several aliases in one request must use the map
-// returned by AliasMetaToolNames instead, which additionally avoids collisions
+// returned by AliasMetaToolNamesDoc instead, which additionally avoids collisions
 // with the request's other tool names.
 func MetaToolAliasName(name string) string {
 	return metaToolAliasName(name, 4)
@@ -98,25 +97,25 @@ type metaToolNameRef struct {
 	name string
 }
 
-// AliasMetaToolNames rewrites function tool names that collide with the Muse
+// AliasMetaToolNamesDoc rewrites function tool names that collide with the Muse
 // Code builtin set, including tool declarations (flat and namespace nested),
-// additional_tools history, function call history and tool_choice. The
-// returned map restores the client names in an upstream response via
-// RestoreMetaToolNames.
-func AliasMetaToolNames(body []byte) ([]byte, MetaToolNameAliases) {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return body, nil
+// additional_tools history, function call history and tool_choice. The returned
+// map restores the client names in an upstream response via
+// RestoreMetaToolNamesDoc.
+func AliasMetaToolNamesDoc(doc *ojson.Doc) MetaToolNameAliases {
+	if doc == nil || doc.Len() == 0 {
+		return nil
 	}
 
 	var refs []metaToolNameRef
 	namesInUse := make(map[string]struct{})
 
-	var declared func(base string, tools gjson.Result)
-	declared = func(base string, tools gjson.Result) {
+	var declared func(base string, tools ojson.Result)
+	declared = func(base string, tools ojson.Result) {
 		if !tools.IsArray() {
 			return
 		}
-		tools.ForEach(func(index, tool gjson.Result) bool {
+		tools.ForEach(func(index, tool ojson.Result) bool {
 			itemPath := fmt.Sprintf("%s.%d", base, index.Int())
 			switch tool.Get("type").String() {
 			case "function", "custom":
@@ -135,10 +134,10 @@ func AliasMetaToolNames(body []byte) ([]byte, MetaToolNameAliases) {
 		})
 	}
 
-	declared("tools", gjson.GetBytes(body, "tools"))
+	declared("tools", doc.Get("tools"))
 
-	if input := gjson.GetBytes(body, "input"); input.IsArray() {
-		input.ForEach(func(index, item gjson.Result) bool {
+	if input := doc.Get("input"); input.IsArray() {
+		input.ForEach(func(index, item ojson.Result) bool {
 			itemPath := fmt.Sprintf("input.%d", index.Int())
 			switch item.Get("type").String() {
 			case "function_call", "custom_tool_call":
@@ -157,15 +156,14 @@ func AliasMetaToolNames(body []byte) ([]byte, MetaToolNameAliases) {
 		})
 	}
 
-	if toolChoice := gjson.GetBytes(body, "tool_choice"); toolChoice.IsObject() {
-		name := toolChoice.Get("name").String()
-		if isMetaMuseBuiltinToolName(name) {
+	if toolChoice := doc.Get("tool_choice"); toolChoice.IsObject() {
+		if name := toolChoice.Get("name").String(); isMetaMuseBuiltinToolName(name) {
 			refs = append(refs, metaToolNameRef{path: "tool_choice.name", name: name})
 		}
 	}
 
 	if len(refs) == 0 {
-		return body, nil
+		return nil
 	}
 
 	// Extend the digest until an alias is unique inside this request, so an
@@ -186,63 +184,81 @@ func AliasMetaToolNames(body []byte) ([]byte, MetaToolNameAliases) {
 		aliasByOriginal[ref.name] = alias
 	}
 
-	out := body
 	for _, ref := range refs {
-		alias, ok := aliasByOriginal[ref.name]
-		if !ok {
-			continue
+		if alias, ok := aliasByOriginal[ref.name]; ok {
+			_ = doc.Set(ref.path, alias)
 		}
-		updated, errSet := sjson.SetBytes(out, ref.path, alias)
-		if errSet != nil {
-			continue
-		}
-		out = updated
 	}
 
 	aliases := make(MetaToolNameAliases, len(aliasByOriginal))
 	for original, alias := range aliasByOriginal {
 		aliases[alias] = original
 	}
-	return out, aliases
+	return aliases
 }
 
 // RestoreMetaToolNames rewrites aliased tool call names back to the client's
 // original names in an upstream Responses payload or SSE event. It only
-// touches function call items, never message content or tool arguments.
+// touches function call items, never message content or tool arguments. The
+// payload is returned unchanged when it declares no aliased name.
 func RestoreMetaToolNames(payload []byte, aliases MetaToolNameAliases) []byte {
-	if len(payload) == 0 || len(aliases) == 0 || !gjson.ValidBytes(payload) {
+	if len(payload) == 0 || len(aliases) == 0 || !ojson.ValidBytes(payload) {
 		return payload
 	}
-	out := payload
-	for _, prefix := range []string{"output", "response.output"} {
-		items := gjson.GetBytes(out, prefix)
+	doc := ojson.NewDoc(payload)
+	if !RestoreMetaToolNamesDoc(doc, aliases) {
+		return payload
+	}
+	return doc.Bytes()
+}
+
+// RestoreMetaToolNamesDoc rewrites aliased tool call names in place on doc and
+// reports whether it changed anything.
+func RestoreMetaToolNamesDoc(doc *ojson.Doc, aliases MetaToolNameAliases) bool {
+	if doc == nil || doc.Len() == 0 || len(aliases) == 0 {
+		return false
+	}
+
+	type restoreRef struct {
+		path     string
+		original string
+	}
+	var refs []restoreRef
+
+	collect := func(base string, items ojson.Result) {
 		if !items.IsArray() {
-			continue
+			return
 		}
-		items.ForEach(func(index, item gjson.Result) bool {
-			out = restoreMetaToolCallName(out, fmt.Sprintf("%s.%d.name", prefix, index.Int()), item, aliases)
+		items.ForEach(func(index, item ojson.Result) bool {
+			path := fmt.Sprintf("%s.%d.name", base, index.Int())
+			if original, ok := metaToolCallOriginal(item, aliases); ok {
+				refs = append(refs, restoreRef{path: path, original: original})
+			}
 			return true
 		})
 	}
-	if item := gjson.GetBytes(out, "item"); item.IsObject() {
-		out = restoreMetaToolCallName(out, "item.name", item, aliases)
+
+	collect("output", doc.Get("output"))
+	collect("response.output", doc.Get("response.output"))
+	if original, ok := metaToolCallOriginal(doc.Get("item"), aliases); ok {
+		refs = append(refs, restoreRef{path: "item.name", original: original})
 	}
-	return out
+
+	if len(refs) == 0 {
+		return false
+	}
+	for _, ref := range refs {
+		_ = doc.Set(ref.path, ref.original)
+	}
+	return true
 }
 
-func restoreMetaToolCallName(payload []byte, namePath string, item gjson.Result, aliases MetaToolNameAliases) []byte {
+func metaToolCallOriginal(item ojson.Result, aliases MetaToolNameAliases) (string, bool) {
 	switch item.Get("type").String() {
 	case "function_call", "custom_tool_call":
 	default:
-		return payload
+		return "", false
 	}
 	original, ok := aliases[item.Get("name").String()]
-	if !ok {
-		return payload
-	}
-	updated, errSet := sjson.SetBytes(payload, namePath, original)
-	if errSet != nil {
-		return payload
-	}
-	return updated
+	return original, ok
 }

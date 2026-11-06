@@ -3,7 +3,7 @@ package helps
 import (
 	"testing"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 func TestAliasMetaToolNames_RenamesMuseBuiltinCollisions(t *testing.T) {
@@ -31,40 +31,42 @@ func TestAliasMetaToolNames_RenamesMuseBuiltinCollisions(t *testing.T) {
 		]
 	}`)
 
-	out, aliases := AliasMetaToolNames(input)
+	doc := ojson.NewDoc(input)
+	aliases := AliasMetaToolNamesDoc(doc)
+	out := doc.Bytes()
 
-	if got := gjson.GetBytes(out, "tools.0.name").String(); got != "read" {
+	if got := ojson.GetBytes(out, "tools.0.name").String(); got != "read" {
 		t.Fatalf("non-colliding tool renamed: %q", got)
 	}
 	bashAlias := MetaToolAliasName("bash")
-	if got := gjson.GetBytes(out, "tools.1.name").String(); got != bashAlias {
+	if got := ojson.GetBytes(out, "tools.1.name").String(); got != bashAlias {
 		t.Fatalf("bash alias = %q, want %q", got, bashAlias)
 	}
-	if got := gjson.GetBytes(out, "tools.2.name").String(); got != MetaToolAliasName("web_search") {
+	if got := ojson.GetBytes(out, "tools.2.name").String(); got != MetaToolAliasName("web_search") {
 		t.Fatalf("web_search alias = %q", got)
 	}
-	if got := gjson.GetBytes(out, "tools.3.name").String(); got != MetaToolAliasName("web_fetch") {
+	if got := ojson.GetBytes(out, "tools.3.name").String(); got != MetaToolAliasName("web_fetch") {
 		t.Fatalf("web_fetch alias = %q", got)
 	}
-	if got := gjson.GetBytes(out, "tools.4.name").String(); got != MetaToolAliasName("create_goal") {
+	if got := ojson.GetBytes(out, "tools.4.name").String(); got != MetaToolAliasName("create_goal") {
 		t.Fatalf("create_goal alias = %q", got)
 	}
-	if got := gjson.GetBytes(out, "tools.5.name").String(); got != MetaToolAliasName("workflow") {
+	if got := ojson.GetBytes(out, "tools.5.name").String(); got != MetaToolAliasName("workflow") {
 		t.Fatalf("workflow alias = %q", got)
 	}
-	if got := gjson.GetBytes(out, "tools.6.tools.0.name").String(); got != MetaToolAliasName("read_file") {
+	if got := ojson.GetBytes(out, "tools.6.tools.0.name").String(); got != MetaToolAliasName("read_file") {
 		t.Fatalf("nested read_file alias = %q", got)
 	}
-	if got := gjson.GetBytes(out, "tools.7.name").String(); got != "" {
+	if got := ojson.GetBytes(out, "tools.7.name").String(); got != "" {
 		t.Fatalf("server web_search tool gained a name: %q", got)
 	}
-	if got := gjson.GetBytes(out, "tool_choice.name").String(); got != bashAlias {
+	if got := ojson.GetBytes(out, "tool_choice.name").String(); got != bashAlias {
 		t.Fatalf("tool_choice alias = %q, want %q", got, bashAlias)
 	}
-	if got := gjson.GetBytes(out, "input.1.name").String(); got != bashAlias {
+	if got := ojson.GetBytes(out, "input.1.name").String(); got != bashAlias {
 		t.Fatalf("history function_call alias = %q, want %q", got, bashAlias)
 	}
-	if got := gjson.GetBytes(out, "input.2.tools.0.name").String(); got != MetaToolAliasName("edit_file") {
+	if got := ojson.GetBytes(out, "input.2.tools.0.name").String(); got != MetaToolAliasName("edit_file") {
 		t.Fatalf("additional_tools alias = %q", got)
 	}
 
@@ -85,7 +87,7 @@ func TestAliasMetaToolNames_RenamesMuseBuiltinCollisions(t *testing.T) {
 			t.Fatalf("aliases[%q] = %q, want %q", alias, aliases[alias], original)
 		}
 	}
-	if !gjson.ValidBytes(out) {
+	if !ojson.ValidBytes(out) {
 		t.Fatalf("aliased body is not valid JSON: %s", out)
 	}
 }
@@ -100,7 +102,9 @@ func TestAliasMetaToolNames_NoCollisionLeavesBodyUntouched(t *testing.T) {
 		"input": [{"role": "user", "content": "hi"}]
 	}`)
 
-	out, aliases := AliasMetaToolNames(input)
+	doc := ojson.NewDoc(input)
+	aliases := AliasMetaToolNamesDoc(doc)
+	out := doc.Bytes()
 	if string(out) != string(input) {
 		t.Fatalf("body changed without collisions: %s", out)
 	}
@@ -118,15 +122,17 @@ func TestAliasMetaToolNames_AvoidsExistingToolNames(t *testing.T) {
 		{"type": "function", "name": "` + defaultAlias + `"}
 	]}`)
 
-	out, aliases := AliasMetaToolNames(input)
-	got := gjson.GetBytes(out, "tools.0.name").String()
+	doc := ojson.NewDoc(input)
+	aliases := AliasMetaToolNamesDoc(doc)
+	out := doc.Bytes()
+	got := ojson.GetBytes(out, "tools.0.name").String()
 	if got == defaultAlias {
 		t.Fatalf("alias %q shadows an existing tool name", got)
 	}
 	if aliases[got] != "bash" {
 		t.Fatalf("alias map = %#v", aliases)
 	}
-	if other := gjson.GetBytes(out, "tools.1.name").String(); other != defaultAlias {
+	if other := ojson.GetBytes(out, "tools.1.name").String(); other != defaultAlias {
 		t.Fatalf("existing tool renamed: %q", other)
 	}
 }
@@ -143,11 +149,11 @@ func TestRestoreMetaToolNames_NonStreamPayload(t *testing.T) {
 	}`)
 
 	out := RestoreMetaToolNames(payload, MetaToolNameAliases{alias: "bash"})
-	if got := gjson.GetBytes(out, "output.1.name").String(); got != "bash" {
+	if got := ojson.GetBytes(out, "output.1.name").String(); got != "bash" {
 		t.Fatalf("function call name = %q, want bash", got)
 	}
 	// Message text must not be rewritten.
-	if got := gjson.GetBytes(out, "output.0.content.0.text").String(); got != alias {
+	if got := ojson.GetBytes(out, "output.0.content.0.text").String(); got != alias {
 		t.Fatalf("message text changed: %q", got)
 	}
 }
@@ -157,18 +163,18 @@ func TestRestoreMetaToolNames_StreamEvents(t *testing.T) {
 	aliases := MetaToolNameAliases{alias: "web_search"}
 
 	added := []byte(`{"type":"response.output_item.added","item":{"type":"function_call","name":"` + alias + `","call_id":"c1"}}`)
-	if got := gjson.GetBytes(RestoreMetaToolNames(added, aliases), "item.name").String(); got != "web_search" {
+	if got := ojson.GetBytes(RestoreMetaToolNames(added, aliases), "item.name").String(); got != "web_search" {
 		t.Fatalf("output_item.added name = %q", got)
 	}
 
 	completed := []byte(`{"type":"response.completed","response":{"output":[{"type":"function_call","name":"` + alias + `","call_id":"c1"}]}}`)
-	if got := gjson.GetBytes(RestoreMetaToolNames(completed, aliases), "response.output.0.name").String(); got != "web_search" {
+	if got := ojson.GetBytes(RestoreMetaToolNames(completed, aliases), "response.output.0.name").String(); got != "web_search" {
 		t.Fatalf("response.completed name = %q", got)
 	}
 
 	// Non-call items keep their names.
 	message := []byte(`{"type":"response.output_item.done","item":{"type":"message","name":"` + alias + `"}}`)
-	if got := gjson.GetBytes(RestoreMetaToolNames(message, aliases), "item.name").String(); got != alias {
+	if got := ojson.GetBytes(RestoreMetaToolNames(message, aliases), "item.name").String(); got != alias {
 		t.Fatalf("message item name changed: %q", got)
 	}
 }

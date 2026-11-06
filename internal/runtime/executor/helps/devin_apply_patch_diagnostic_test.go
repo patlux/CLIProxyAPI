@@ -2,6 +2,7 @@ package helps
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -59,13 +60,28 @@ func TestDevinApplyPatchDiagnosticsUsesTranslatorReason(t *testing.T) {
 	}
 }
 
-func TestDevinApplyPatchDiagnosticsClassifiesJSONDecoderControlCharacter(t *testing.T) {
-	_, err := applypatch.UnwrapInput("{\"input\":\"synthetic\npatch\"}")
-	if err == nil {
-		t.Fatal("expected raw newline to be rejected")
+func TestDevinApplyPatchDiagnosticsControlCharacterReasons(t *testing.T) {
+	for c := byte(0); c < 0x20; c++ {
+		t.Run(fmt.Sprintf("control_%02x", c), func(t *testing.T) {
+			_, err := applypatch.UnwrapInput("{\"input\":\"secret" + string(c) + "secret\"}")
+			if err == nil {
+				t.Fatal("expected invalid JSON")
+			}
+			state := &common.ApplyPatchErrorState{}
+			state.SetToolInputError(err)
+			got := (*DevinApplyPatchDiagnostics)(nil).Render(state, "")
+			if !strings.Contains(got, `reason="invalid control character in apply_patch input"`) || strings.Contains(got, "secret") {
+				t.Fatalf("unexpected diagnostic: %s", got)
+			}
+		})
 	}
-	if got := devinPatchReasonCode(err.Error()); got != "invalid control character in apply_patch input" {
-		t.Fatalf("reason = %q for decoder error %q", got, err)
+	for _, reason := range []string{
+		`decode apply_patch input value: invalid character 'x' in string`,
+		`decode apply_patch input value: invalid character 'secret' in string`,
+	} {
+		if got := devinPatchReasonCode(reason); got != "other" {
+			t.Errorf("reason %q classified as %q", reason, got)
+		}
 	}
 }
 
