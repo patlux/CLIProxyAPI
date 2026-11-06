@@ -26,11 +26,17 @@ func (MetaAuthenticator) Provider() string {
 	return "meta"
 }
 
+// metaRefreshLead bounds how long a minted Meta credential may age before
+// the manager re-mints it. The minted API key does not expire, but the
+// subs_usage quota snapshot exists only on the mint response: with no
+// scheduled re-mint, the snapshot captured at login would be served forever
+// and quota consumers would go blind once its usage windows pass. On-demand
+// recovery (401, request preparation) still applies on top of this schedule.
+var metaRefreshLead = 30 * time.Minute
+
 // RefreshLead instructs the manager on token refresh lead time.
-// Meta credentials do not advertise an API key expiration, so scheduled refresh
-// is disabled and recovery is triggered on demand (e.g. on 401 or request preparation).
 func (MetaAuthenticator) RefreshLead() *time.Duration {
-	return nil
+	return &metaRefreshLead
 }
 
 // Login launches the OAuth device-code flow to obtain Meta tokens and persists them.

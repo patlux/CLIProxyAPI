@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 type metaTestTransport func(*http.Request) (*http.Response, error)
@@ -22,8 +24,19 @@ func TestMetaAuthenticator(t *testing.T) {
 	if authenticator.Provider() != "meta" {
 		t.Errorf("expected provider 'meta', got '%s'", authenticator.Provider())
 	}
-	if lead := authenticator.RefreshLead(); lead != nil {
-		t.Errorf("expected nil refresh lead, got %v", lead)
+	if lead := authenticator.RefreshLead(); lead == nil || *lead != 30*time.Minute {
+		t.Errorf("expected 30m refresh lead, got %v", lead)
+	}
+}
+
+// The manager schedules credential refreshes from the registered provider
+// lead. Meta must expose one: the minted API key never expires, so a nil
+// lead leaves the credential unscheduled forever and the subs_usage quota
+// snapshot captured at login goes stale until its windows pass.
+func TestMetaProviderRefreshLeadRegistered(t *testing.T) {
+	lead := coreauth.ProviderRefreshLead("meta", nil)
+	if lead == nil || *lead != 30*time.Minute {
+		t.Fatalf("ProviderRefreshLead(meta) = %v, want 30m", lead)
 	}
 }
 
