@@ -169,6 +169,10 @@ func (e *MetaExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*c
 	}
 	auth.Metadata["is_subs_active"] = minted.IsSubsActive
 	auth.Metadata["has_payment_method"] = minted.HasPaymentMethod
+	// The mint endpoint only intermittently includes subs_usage. A
+	// usage-less mint keeps the last good snapshot: deleting it would blank
+	// quota consumers until a later mint happens to carry usage again, and
+	// the snapshot's own reset times already bound its staleness.
 	if minted.SubsUsage != nil {
 		auth.Metadata["subs_usage"] = map[string]any{
 			"window": map[string]any{
@@ -181,8 +185,6 @@ func (e *MetaExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*c
 				"resets_at":    minted.SubsUsage.Weekly.ResetsAt,
 			},
 		}
-	} else {
-		delete(auth.Metadata, "subs_usage")
 	}
 	auth.Metadata["type"] = "meta"
 	nowStr := time.Now().Format(time.RFC3339)
@@ -205,7 +207,9 @@ func (e *MetaExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*c
 		storage.Expired = ""
 		storage.BaseURL = baseURL
 		storage.LastRefresh = nowStr
-		storage.SubsUsage = minted.SubsUsage
+		if minted.SubsUsage != nil {
+			storage.SubsUsage = minted.SubsUsage
+		}
 		storage.Metadata = auth.Metadata
 		if minted.UserEmail != "" {
 			storage.Email = minted.UserEmail

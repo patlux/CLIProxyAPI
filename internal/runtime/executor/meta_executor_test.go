@@ -88,6 +88,56 @@ func TestMetaExecutorRefreshCarriesSubsUsage(t *testing.T) {
 	}
 }
 
+// The mint endpoint only intermittently includes subs_usage (observed live:
+// a usage-less mint at 05:27Z blanked the limits page until the next lucky
+// mint). A usage-less mint must keep the last good snapshot instead of
+// deleting it; the exporter ages windows out by their own reset times.
+func TestMetaExecutorRefreshWithoutSubsUsageKeepsSnapshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(metaauth.MintedKeyResponse{APIKey: "LLM|replacement"})
+	}))
+	defer server.Close()
+	t.Setenv("META_MINT_URL", server.URL)
+
+	existing := map[string]any{
+		"window": map[string]any{"window_duration_mins": float64(300), "used_percent": 12.5, "resets_at": float64(2_000_000_000)},
+		"weekly": map[string]any{"used_percent": float64(34), "resets_at": float64(2_000_604_800)},
+	}
+	auth := &cliproxyauth.Auth{Provider: "meta", Metadata: map[string]any{"dca_token": "dca:test", "subs_usage": existing}}
+	updated, err := NewMetaExecutor(nil).Refresh(context.Background(), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Metadata["api_key"] != "LLM|replacement" {
+		t.Fatalf("minted key not installed: %#v", updated.Metadata["api_key"])
+	}
+	usage, ok := updated.Metadata["subs_usage"].(map[string]any)
+	if !ok || usage["weekly"].(map[string]any)["used_percent"] != float64(34) {
+		t.Fatalf("snapshot clobbered by usage-less mint: %#v", updated.Metadata["subs_usage"])
+	}
+
+	withStorage := &cliproxyauth.Auth{
+		Provider: "meta",
+		Metadata: map[string]any{"dca_token": "dca:test"},
+		Storage: &metaauth.MetaTokenStorage{
+			Type:     "meta",
+			DCAToken: "dca:test",
+			SubsUsage: &metaauth.SubsUsage{
+				Window: metaauth.SubsUsageWindow{WindowDurationMins: 300, UsedPercent: 12.5, ResetsAt: 2_000_000_000},
+				Weekly: metaauth.SubsUsageWindow{UsedPercent: 34, ResetsAt: 2_000_604_800},
+			},
+		},
+	}
+	updatedStorage, err := NewMetaExecutor(nil).Refresh(context.Background(), withStorage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage, ok := updatedStorage.Storage.(*metaauth.MetaTokenStorage)
+	if !ok || storage.SubsUsage == nil || storage.SubsUsage.Weekly.UsedPercent != 34 {
+		t.Fatalf("storage snapshot clobbered by usage-less mint: %#v", updatedStorage.Storage)
+	}
+}
+
 func TestMetaExecutor_Identifier(t *testing.T) {
 	exec := NewMetaExecutor(&config.Config{})
 	if exec.Identifier() != "meta" {
