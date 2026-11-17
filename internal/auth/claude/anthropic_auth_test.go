@@ -129,6 +129,7 @@ func TestExchangeCodeForTokensUsesNative220ControlPlaneShape(t *testing.T) {
 	var order []string
 	headers := make(map[string]http.Header)
 	var tokenBody []byte
+	state := strings.Repeat("Ab9-_", 8) + "AbA"
 
 	auth := &ClaudeAuth{
 		httpClient: &http.Client{
@@ -168,7 +169,7 @@ func TestExchangeCodeForTokensUsesNative220ControlPlaneShape(t *testing.T) {
 		},
 	}
 
-	bundle, errExchange := auth.ExchangeCodeForTokens(t.Context(), "auth-code", "state-value", &PKCECodes{CodeVerifier: "verifier"})
+	bundle, errExchange := auth.ExchangeCodeForTokens(t.Context(), "auth-code", state, &PKCECodes{CodeVerifier: "verifier"})
 	if errExchange != nil {
 		t.Fatalf("ExchangeCodeForTokens() error = %v", errExchange)
 	}
@@ -184,7 +185,7 @@ func TestExchangeCodeForTokensUsesNative220ControlPlaneShape(t *testing.T) {
 	}
 
 	// Key order mirrors the captured native exchange body.
-	wantBody := `{"grant_type":"authorization_code","code":"auth-code","redirect_uri":"` + RedirectURI + `","client_id":"` + ClientID + `","code_verifier":"verifier","state":"state-value"}`
+	wantBody := `{"grant_type":"authorization_code","code":"auth-code","redirect_uri":"` + RedirectURI + `","client_id":"` + ClientID + `","code_verifier":"verifier","state":"` + state + `"}`
 	if got := string(tokenBody); got != wantBody {
 		t.Fatalf("exchange body = %q, want %q", got, wantBody)
 	}
