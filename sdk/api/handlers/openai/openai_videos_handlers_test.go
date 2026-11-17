@@ -1227,3 +1227,86 @@ func videosCreateRequestFromFormContext(body string) ([]byte, error) {
 	router.ServeHTTP(resp, req)
 	return rawJSON, err
 }
+
+func newXAIVideosPrefixedTestHandler(t *testing.T, executor *videoAuthCaptureExecutor, authID string, modelIDs []string) *OpenAIAPIHandler {
+	t.Helper()
+
+	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
+	manager.RegisterExecutor(executor)
+	auth := &coreauth.Auth{
+		ID:       authID,
+		Provider: "xai",
+		Prefix:   "xai",
+		Status:   coreauth.StatusActive,
+	}
+	if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
+		t.Fatalf("manager.Register(%s): %v", authID, errRegister)
+	}
+	models := make([]*registry.ModelInfo, 0, len(modelIDs))
+	for _, id := range modelIDs {
+		models = append(models, &registry.ModelInfo{ID: id, Object: "model", OwnedBy: "xai", Type: "xai"})
+	}
+	registry.GetGlobalRegistry().RegisterClient(authID, auth.Provider, models)
+	manager.RefreshSchedulerEntry(authID)
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(authID)
+	})
+
+	base := apihandlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{ForceModelPrefix: true}, manager)
+	return NewOpenAIAPIHandler(base)
+}
+
+// A credential with a prefix and force-model-prefix registers its video models
+// only as "xai/<model>". Create and retrieve must route on that name.
+func TestXAIVideosNativeRoutesPrefixedModelWhenForceModelPrefixEnabled(t *testing.T) {
+	for _, model := range []string{xaiVideos15Model, xaiVideos15PreviewAlias, xaiVideos15LiteModel, defaultXAIVideosModel} {
+		t.Run(model, func(t *testing.T) {
+			resetVideoAuthBindingsForTest(t)
+			executor := &videoAuthCaptureExecutor{requestID: "video-xai-prefixed-" + model}
+			handler := newXAIVideosPrefixedTestHandler(t, executor, "video-xai-prefixed-auth-"+model, []string{"xai/" + model})
+
+			body := strings.NewReader(`{"model":"xai/` + model + `","prompt":"make a video"}`)
+			createResp := performVideosEndpointRequest(t, http.MethodPost, xaiVideosGenerationsAPI, "application/json", body, handler.XAIVideosGenerations)
+			if createResp.Code != http.StatusOK {
+				t.Fatalf("create status = %d, want %d: %s", createResp.Code, http.StatusOK, createResp.Body.String())
+			}
+			videoID := ojson.GetBytesNoCopy(createResp.Body.Bytes(), "request_id").String()
+			if videoID != executor.requestID {
+				t.Fatalf("created request_id = %q, want %q", videoID, executor.requestID)
+			}
+
+			retrieveResp := performVideosRouteRequest(t, http.MethodGet, videosPath+"/:request_id", videosPath+"/"+videoID, "", nil, handler.XAIVideosRetrieve)
+			if retrieveResp.Code != http.StatusOK {
+				t.Fatalf("retrieve status = %d, want %d: %s", retrieveResp.Code, http.StatusOK, retrieveResp.Body.String())
+			}
+
+			if authIDs := executor.AuthIDs(); len(authIDs) != 2 {
+				t.Fatalf("authIDs = %v, want create and retrieve", authIDs)
+			}
+			if got := executor.PayloadModels()[0]; got != canonicalXAIVideosModel(model) {
+				t.Fatalf("upstream model = %q, want %s without the prefix", got, canonicalXAIVideosModel(model))
+			}
+		})
+	}
+}
+
+func TestVideosCreateRoutesPrefixedModelWhenForceModelPrefixEnabled(t *testing.T) {
+	resetVideoAuthBindingsForTest(t)
+	executor := &videoAuthCaptureExecutor{requestID: "video-openai-prefixed"}
+	handler := newXAIVideosPrefixedTestHandler(t, executor, "video-openai-prefixed-auth", []string{"xai/" + xaiVideos15Model})
+
+	body := strings.NewReader(`{"model":"xai/grok-imagine-video-1.5","prompt":"make a video"}`)
+	createResp := performVideosEndpointRequest(t, http.MethodPost, openAIVideosPath, "application/json", body, handler.VideosCreate)
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create status = %d, want %d: %s", createResp.Code, http.StatusOK, createResp.Body.String())
+	}
+	videoID := ojson.GetBytesNoCopy(createResp.Body.Bytes(), "id").String()
+
+	retrieveResp := performVideosRouteRequest(t, http.MethodGet, openAIVideosPath+"/:video_id", openAIVideosPath+"/"+videoID, "", nil, handler.VideosRetrieve)
+	if retrieveResp.Code != http.StatusOK {
+		t.Fatalf("retrieve status = %d, want %d: %s", retrieveResp.Code, http.StatusOK, retrieveResp.Body.String())
+	}
+	if authIDs := executor.AuthIDs(); len(authIDs) != 2 {
+		t.Fatalf("authIDs = %v, want create and retrieve", authIDs)
+	}
+}

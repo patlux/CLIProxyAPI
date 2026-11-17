@@ -226,6 +226,35 @@ func routingXAIVideosModel(model string) string {
 	return defaultXAIVideosModel
 }
 
+// routingXAIVideosModelWithPrefix returns the model name the auth manager routes on.
+// A credential with a prefix can register its models only as "<prefix>/<model>"
+// (force-model-prefix). The prefix of the request is kept in that case, as
+// routingXAIImagesModel does for images; routing on the bare name would fail with
+// "unknown provider for model".
+func (h *OpenAIAPIHandler) routingXAIVideosModelWithPrefix(model string) string {
+	routing := routingXAIVideosModel(model)
+	prefix, _ := imagesModelParts(model)
+	if prefix == "" {
+		return routing
+	}
+	prefixedModel := prefix + "/" + routing
+	if resolved, ok := registeredXAIImagesModel(prefixedModel); ok {
+		return resolved
+	}
+	if h != nil && !isXAIVendorAlias(prefix) {
+		if cfg := h.CurrentConfig(); cfg != nil && cfg.ForceModelPrefix {
+			return prefixedModel
+		}
+	}
+	if h != nil && h.BaseAPIHandler != nil && h.AuthManager != nil && h.AuthManager.HomeEnabled() {
+		return prefixedModel
+	}
+	if _, ok := registeredXAIImagesModel(routing); !ok {
+		return prefixedModel
+	}
+	return routing
+}
+
 func responseVideosModel(model string) string {
 	return canonicalXAIVideosModel(model)
 }
@@ -330,11 +359,11 @@ func (h *OpenAIAPIHandler) bindVideoAuthIDAndModelFromPayload(payload []byte, au
 	if videoID == "" {
 		return
 	}
-	videoAuthBindings.setWithModel(videoID, authID, routingXAIVideosModel(model), h.videoAuthBindingTTL())
+	videoAuthBindings.setWithModel(videoID, authID, h.routingXAIVideosModelWithPrefix(model), h.videoAuthBindingTTL())
 }
 
 func (h *OpenAIAPIHandler) bindVideoAuthID(videoID string, authID string, model string) {
-	videoAuthBindings.setWithModel(videoID, authID, routingXAIVideosModel(model), h.videoAuthBindingTTL())
+	videoAuthBindings.setWithModel(videoID, authID, h.routingXAIVideosModelWithPrefix(model), h.videoAuthBindingTTL())
 }
 
 func (h *OpenAIAPIHandler) contextWithVideoAuthBinding(ctx context.Context, videoID string) context.Context {
@@ -727,6 +756,7 @@ func (h *OpenAIAPIHandler) VideosCreate(c *gin.Context) {
 		writeVideosFailedError(c, http.StatusBadRequest, responseVideosModel(videoModel), "invalid_request_error", fmt.Sprintf("Invalid request: %v", err))
 		return
 	}
+	meta.RoutingModel = h.routingXAIVideosModelWithPrefix(videoModel)
 
 	h.collectXAIVideosCreate(c, xaiReq, meta)
 }
@@ -763,7 +793,7 @@ func (h *OpenAIAPIHandler) handleXAIVideosNativePost(c *gin.Context) {
 		return
 	}
 
-	routingModel := routingXAIVideosModel(videoModel)
+	routingModel := h.routingXAIVideosModelWithPrefix(videoModel)
 	rawJSON, _ = ojson.SetBytes(rawJSON, "model", canonicalXAIVideosModel(videoModel))
 	h.collectXAIVideosNative(c, rawJSON, routingModel, true)
 }
